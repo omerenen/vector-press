@@ -37,8 +37,8 @@ python -m pytest -q
 vectorize --help
 ```
 
-Not (ticari dağıtım): resmi Pillow tekerleği GPL-3 lisanslı libimagequant içerir. Uygulamayı paketleyip dağıtacaksanız
-Pillow'u kaynaktan derleyin — ayrıntılar [LICENSES.md](LICENSES.md) içinde.
+Lisanslar: tüm çalışma zamanı bağımlılıkları izin verici (MIT/BSD/Apache/Zlib…); ayrıntılar ve kontrol komutları
+[LICENSES.md](LICENSES.md) içinde.
 
 ## Komut satırı (CLI)
 

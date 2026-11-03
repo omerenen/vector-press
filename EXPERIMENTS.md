@@ -188,6 +188,21 @@ tuned baseline 0.838), ΔE −0.11. Overall **0.904** → best-v3.
   `abl_016_interp` (interpolate unknown shifts across junction profiles): slightly worse (prim −0.026) → reverted.
   Visible residual defect: thin strokes look slightly pinched where they cross other strokes (see sheet_line_art).
 
+## Independent review (M6) and fixes
+An independent reviewer (fresh context: code, test metrics, contact sheets, licenses only) reported; full list and actions
+in REPORT.md §8. Fixed: region-explosion fallback to the photo engine with early bail-out (1024² noise 93 s → 14 s; Hubble
+star fields no longer routed to the region engine), photo preset processes ≤1024 px (3000² photo 55 s → 7 s), genuinely
+translucent regions keep `fill-opacity` (alpha-128 square was rendered opaque), max mode now upsamples above 1024 px
+(cap 3072 px), VTracer output normalised (viewBox, no prolog), uint16/NaN input, tiny/thin images emitted as exact pixel
+runs, full `stats` on empty input, string options, metric: embedded raster scores 0, viewBox offset; LICENSES.md corrected
+(libimagequant is NOT in the Pillow wheel; torch/NVIDIA note; Unicode-3.0 / LLVM-exception; third-party imagery notice).
+A first version of the opacity fix treated anti-aliased alpha bands as translucent and produced gaps on test_0066
+(257 px) — caught by the test-split gap metric, fixed (only regions whose pixels mostly have *flat* partial alpha).
+Disclosure: three generic bugs were found while inspecting test outputs (seam width in max mode on test_0020, the
+primitive-metric subpath/near-circle handling, the opacity regression above); no parameter was tuned on test.
+Final test: fast 0.901 (gap 0), max 0.905 (gap 0); dev: fast 0.904. Real-world subset (72 icons/logos/emoji):
+tuned VTracer 0.833 → final 0.919.
+
 ## Best versions (git tags cannot be pushed from this environment: HTTP 403 on refs/tags; recorded here instead)
 | tag | commit | dev composite | note |
 |---|---|---|---|
