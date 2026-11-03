@@ -58,6 +58,23 @@ Seçenekler: `--preset {auto, logo, icon, illustration, flat_illustration, line_
 `--mode {fast, max}`, `--colors N|auto`, `--detail 0..1`, `--corner-sharpness 0..1`, `--primitives true|false`,
 `--gradients true|false`, `--centerline true|false`. (`python -m vectorizer ...` de çalışır.)
 
+### Baskı ve kesim (print / cut)
+
+```bash
+vectorize tasarim.png -o kesim.svg --preset cut          # vinil / Cricut / lazer: kesim dosyası
+```
+
+```bash
+vectorize poster.png -o baski.svg --preset print         # baskı: üst üste katmanlı, tam doğruluk
+```
+
+- `cut`: her bölge gerçek delikleriyle (cutout, üst üste binme yok, dikiş çizgisi yok), renk başına tek yol, en fazla
+  8 düz renk, gradyan yok, arka plan rengi atılır, `cut_width_mm` (varsayılan 100 mm) çıktı genişliğinde `min_feature_mm`
+  (0.5 mm) altındaki ince parçalar ve adacıklar kaldırılır. `silhouette=True` ile tek renk siluet.
+- `print`: üst üste (stacked), gradyanlı, tam doğruluk.
+- Hazırlık metrikleri (kapalı yollar, kendini kesen yollar, örtüşme oranı, küçük adacık, ince detay, renk ve düğüm sayısı):
+  `eval/printcut.py`.
+
 ## Python API
 
 ```python

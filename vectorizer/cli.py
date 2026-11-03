@@ -12,7 +12,7 @@ import sys
 import time
 
 from .api import vectorize
-from .presets import PRESETS
+from .presets import INTENTS, PRESETS
 
 EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff"}
 
@@ -25,7 +25,7 @@ def build_parser():
     ap = argparse.ArgumentParser(prog="vectorize", description="Raster (PNG/JPG/WebP) to SVG vectoriser.")
     ap.add_argument("input", help="input image file or directory")
     ap.add_argument("-o", "--output", help="output .svg file or directory (default: next to input)")
-    ap.add_argument("--preset", default="auto", choices=["auto"] + sorted(PRESETS))
+    ap.add_argument("--preset", default="auto", choices=["auto"] + sorted(INTENTS) + sorted(PRESETS))
     ap.add_argument("--mode", default="fast", choices=["fast", "max"])
     ap.add_argument("--colors", default=None, help="max number of colours or 'auto'")
     ap.add_argument("--detail", type=float, default=None, help="0 (coarse) .. 1 (fine), default 0.5")
@@ -33,6 +33,9 @@ def build_parser():
     ap.add_argument("--primitives", type=_bool, default=None, help="emit circle/ellipse/rect elements (default on)")
     ap.add_argument("--gradients", type=_bool, default=None, help="fit gradients (default: per preset)")
     ap.add_argument("--centerline", type=_bool, default=None, help="trace thin strokes as centre lines (default off)")
+    ap.add_argument("--silhouette", type=_bool, default=None, help="cut preset: single-colour silhouette")
+    ap.add_argument("--width-mm", type=float, default=None, help="cut preset: physical output width (mm) for size limits")
+    ap.add_argument("--min-feature-mm", type=float, default=None, help="cut preset: smallest feature kept (mm)")
     ap.add_argument("--stats", action="store_true", help="print per-image stats as JSON lines")
     return ap
 
@@ -41,7 +44,9 @@ def _opts(a):
     o = {}
     if a.colors is not None:
         o["colors"] = a.colors if a.colors == "auto" else int(a.colors)
-    for k in ("detail", "corner_sharpness", "primitives", "gradients", "centerline"):
+    if a.width_mm is not None:
+        o["cut_width_mm"] = a.width_mm
+    for k in ("detail", "corner_sharpness", "primitives", "gradients", "centerline", "silhouette", "min_feature_mm"):
         v = getattr(a, k)
         if v is not None:
             o[k] = v

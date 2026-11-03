@@ -171,7 +171,7 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
             opts.update(preset_options("photo_posterize"))
         opts.update(INTENTS[intent])
         stats["intent"] = intent
-        auto = intent != "cut"               # cut never falls back to the VTracer photo engine
+        auto = False                         # cut/print never fall back to the VTracer photo engine (clean vectors)
     stats["preset"] = preset if not intent else f"{intent}:{preset}"
     if mode == "max" and preset in MAX_MODE_PRESETS:
         opts.update(MAX_MODE)

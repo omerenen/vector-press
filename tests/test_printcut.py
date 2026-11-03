@@ -20,7 +20,7 @@ def test_cut_preset_is_cut_ready():
     r = vectorize(_design(), preset="cut")
     m = printcut_metrics(r.svg, 400, 400)
     assert m["open_subpaths"] == 0
-    assert abs(m["overlap_ratio"]) < 1e-3          # cutout geometry, no layering
+    assert abs(m["overlap_ratio"]) < 0.01           # cutout geometry, no layering (raster union: +-0.5 %)
     assert m["tiny_islands"] == 0
     assert m["n_colors"] <= 2                        # background dropped
     assert r.stats["preset"].startswith("cut:")

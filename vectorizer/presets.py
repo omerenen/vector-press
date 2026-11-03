@@ -14,12 +14,13 @@ GRADIENT = dict(merge_frac=0.6, mix_suppress=False, gradients=True)
 PHOTO = dict(engine="vtracer_raw", max_side=1024,
              vtracer_params=dict(filter_speckle=2, color_precision=8, layer_difference=8, corner_threshold=30,
                                  length_threshold=4.0))
-PHOTO_POSTERIZE = dict(merge_frac=0.6, mix_suppress=False, gradients=True, max_side=640)
+PHOTO_POSTERIZE = dict(engine="graph", vtracer_params=None, merge_frac=0.6, mix_suppress=False, gradients=True,
+                       max_side=640)
 
 # Output-intent presets: applied on top of the content preset chosen by the classifier.
-CUT = dict(cutout=True, seam_width=0.0, gradients=False, max_colors=8, merge_frac=1.0, drop_background=True,
-           min_feature_mm=0.5, subpixel=True)
-PRINT = dict(cutout=False, gradients=True)
+CUT = dict(engine="graph", cutout=True, seam_width=0.0, gradients=False, max_colors=8, merge_frac=1.0,
+           drop_background=True, min_feature_mm=0.5, subpixel=True, max_side=2048)
+PRINT = dict(engine="graph", cutout=False, gradients=True, max_side=2048)
 INTENTS = {"cut": CUT, "print": PRINT}
 
 PRESETS = {

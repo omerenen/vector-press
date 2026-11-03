@@ -3,7 +3,8 @@
 Physical scale: the SVG is assumed to be produced at `width_mm` (default 100 mm = 10 cm) wide.
   open_subpaths        filled subpaths that are not explicitly closed (Z) and whose end != start
   self_intersections   subpaths whose flattened outline is not simple (cutters choke on these)
-  overlap_ratio        sum of the areas of all filled shapes / area of their union - 1 (0 = pure cutout, no layering)
+  overlap_ratio        sum of the (exact, shapely) areas of all filled shapes / area of their union - 1 (0 = pure cutout);
+                       the union area comes from a crisp 800-px render (resolution about +-0.5 %)
   n_colors             distinct fill paints (a gradient counts as one paint)
   tiny_islands         connected same-colour components with equivalent diameter < min_mm (0.5 mm) - weeding nightmare
   thin_features        connected components thinner than min_mm somewhere (2*max distance < min_mm) or with
@@ -147,9 +148,8 @@ def _is_filled(at):
     return f != "none"
 
 
-def geometry_metrics(svg, scale_to_mm):
+def geometry_metrics(svg, scale_to_mm, vb_w=None):
     from shapely.geometry import Polygon
-    from shapely.ops import unary_union
     from shapely.validation import make_valid
     open_sp = selfx = 0
     n_sub = 0
@@ -177,14 +177,28 @@ def geometry_metrics(svg, scale_to_mm):
         # even-odd composition of the subpaths (nonzero == even-odd for properly oriented, non-overlapping rings)
         g = None
         for p in polys:
-            p = make_valid(p).buffer(0)
-            g = p if g is None else g.symmetric_difference(p)
+            try:
+                p = make_valid(p).buffer(0)
+                g = p if g is None else g.symmetric_difference(p, grid_size=1e-6)
+            except Exception:           # GEOS topology failure on degenerate input: skip this ring
+                continue
         if g is not None and not g.is_empty:
             areas += g.area
             geoms.append(g)
-    union = unary_union(geoms).area if geoms else 0.0
+    # union area = covered area of a crisp render (exact polygon union is slow / fragile on 10^4 paths)
+    union = 0.0
+    if geoms:
+        import io
+        import resvg_py
+        from PIL import Image
+        Wr = 800
+        png = resvg_py.svg_to_bytes(svg_string=svg, width=Wr, shape_rendering="crisp_edges", skip_system_fonts=True)
+        a = np.asarray(Image.open(io.BytesIO(bytes(png))).convert("RGBA"))[..., 3]
+        mm_per_px = (vb_w * scale_to_mm) / a.shape[1]
+        union = float((a >= 128).sum()) * mm_per_px * mm_per_px
     return {"open_subpaths": open_sp, "self_intersections": selfx, "n_subpaths": n_sub,
-            "overlap_ratio": float(areas / union - 1.0) if union > 0 else 0.0, "n_colors": len(paints)}
+            "overlap_ratio": float(areas / union - 1.0) if union > 0 else (float("nan") if union != union else 0.0),
+            "n_colors": len(paints)}
 
 
 def _layers(svg):
@@ -291,7 +305,7 @@ def printcut_metrics(svg, W, H, width_mm=100.0, min_mm=0.5):
     root = ET.fromstring(svg)
     vb = root.attrib.get("viewBox")
     vw = float(re.split(r"[ ,]+", vb.strip())[2]) if vb else float(W)
-    m = geometry_metrics(svg, width_mm / vw)
+    m = geometry_metrics(svg, width_mm / vw, vb_w=vw)
     m.update(raster_metrics(svg, W, H, width_mm=width_mm, min_mm=min_mm))
     m["n_nodes"] = structure_stats(svg)["n_nodes"]
     return m

@@ -266,3 +266,19 @@ New presets (`vectorizer/presets.py`, applied on top of the classifier's content
   no gradients, background colour dropped, minimum feature 0.5 mm at `cut_width_mm` (100 mm) enforced on the label map
   (per-colour opening + island merge, `vectorizer/pipeline/cut.py`), optional `silhouette=True` (single colour).
 - `print`: stacked, full fidelity (= content preset; gradients on).
+
+## P2-3 Target baseline on `tdev` (phase2-base; full run, 53 images, metrics vs the input image)
+| method | composite | SSIM | PSNR | LPIPS | ΔE | edgeF | paths | gz KB | overlap | self-x | tiny islands | colours | t_med s* |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| VTracer default | 0.680 | 0.783 | 22.9 | 0.184 | 4.15 | 0.883 | 10044 | 2306 | 2.62 | 92.8 | 10979 | 8276 | 4.3 |
+| VTracer tuned (oracle cat.) | 0.680 | 0.783 | 23.4 | 0.184 | 3.92 | 0.868 | 10838 | 2104 | 2.75 | 74.6 | 12287 | 9010 | 4.9 |
+| final (best-v4, auto) | 0.702 | 0.796 | 24.9 | 0.185 | 3.35 | 0.865 | 11903 | 1777 | 3.11 | 121.3 | 13225 | 9676 | 6.7 |
+| print preset | 0.688 | 0.780 | 24.4 | 0.203 | 3.50 | 0.843 | 9300 | 1390 | 3.03 | 104.8 | 10078 | 7432 | 5.8 |
+| cut preset | 0.391 | 0.496 | 12.7 | 0.495 | 22.52 | 0.544 | 1819 | 297 | 0.77 | 40.0 | 1462 | 1710 | 6.1 |
+\* eval timings with 4 workers (contended), not the speed benchmark.
+Diagnosis (root cause, before any change): **37/53 target images end up as photo-like VTracer output** (region-density
+fallback, median 7 000–16 000 paths, 1.2–2.4 MB gzipped); even logos have a median of 1 600 paths. The region engine
+explodes on DALL-E textures (painterly shading, generator noise, fine fake detail), so the safeguard routes to VTracer.
+Our lead over VTracer on the target set is therefore small (0.702 vs 0.680) — the key target problem is a segmentation /
+palette stage that turns textured AI art into clean, compact, print/cut-ready regions (→ stream B). Cut preset: overlap
+≈ 0 by construction, but still ~1 800 paths and ~300 KB for a cut file (same root cause).

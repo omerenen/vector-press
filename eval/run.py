@@ -150,8 +150,11 @@ def evaluate_one(args):
             rec["prim_per_type"] = per
         if cfg.get("printcut"):
             from eval.printcut import printcut_metrics
-            for k, v in printcut_metrics(svg, W, H).items():
-                rec["pc_" + k] = v
+            try:
+                for k, v in printcut_metrics(svg, W, H).items():
+                    rec["pc_" + k] = v
+            except Exception as e:      # a metric failure must not mark the SVG invalid
+                rec["pc_error"] = f"{type(e).__name__}: {e}"
         rec["composite"] = M.composite(rec)
     except Exception as e:
         rec["valid"] = False
