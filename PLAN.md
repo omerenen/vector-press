@@ -9,16 +9,21 @@ LPIPS is computed only when the weights are already in the torch cache (`eval: l
 
 ## Milestones
 - [x] M1  env, dataset builder (dev/test, 130 images each, 7 categories), metrics, runner, contact sheets, baseline exp_000
-- [ ] M1b per-category VTracer grid search (exp_001_baseline_tuned) — running
-- [ ] M2  preprocessing & quantization (W1, W2): OKLab palette, AA-aware assignment, speckle merge  ← first version done (exp_002)
-- [ ] M3  geometry (W3–W5): shared boundary graph (done v0), corners, curves, primitives, gaps
-- [ ] M4  gradients (W6), centerline (W8), classifier + presets (W7)
-- [ ] M5  research extras (subpixel refinement, arc fitting, optional learned parts)
-- [ ] M6  final held-out test evaluation, independent review, fresh-clone test
-- [ ] M7  API/CLI polish, README (TR), REPORT (TR), LICENSES
+- [x] M1b per-category VTracer grid search (exp_001_baseline_tuned)
+- [x] M2  preprocessing & quantization (W1, W2): OKLab palette, AA-aware assignment, speckle merge
+- [x] M3  geometry (W3–W5): shared boundary graph (done v0), corners, curves, primitives, gaps
+- [x] M4  gradients (W6), centerline (W8), classifier + presets (W7)
+- [x] M5  research extras (subpixel refinement, arc fitting, optional learned parts)
+- [x] M6  final held-out test evaluation, independent review, fresh-clone test
+- [x] M7  API/CLI polish, README (TR), REPORT (TR), LICENSES
 
 ## Architecture (current)
 load → quantize (OKLab palette, mixed-pixel aware) → region labels → crack-lattice boundary graph
 → per-chain fit (corners, lines, Schneider Béziers, ellipse/rect/rounded-rect primitives)
 → stacked drawing with filled holes + seam strokes → compact SVG.
 VTracer is used for photo/posterize mode and as a fallback engine (`engine="vtracer"`).
+
+## Status (final)
+All milestones done; final numbers in REPORT.md (held-out test: composite 0.901 vs 0.817 tuned VTracer).
+Remaining ideas if work resumes: arc fitting for partially occluded circles, alpha-gradient fills, JPEG thin-line
+continuity (crossings), faster quantisation for the 2 s stretch goal, photo mode beyond VTracer.
