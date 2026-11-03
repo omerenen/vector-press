@@ -505,12 +505,13 @@ def label_medians(lbl, lab, flat, fallback):
 
 def quantize(rgb, alpha, radius=0.045, max_colors=64, min_area=None, window=2, alpha_threshold=128,
              thin_lines=True, mix_suppress=True, slivers=True, merge_frac=0.6, denoise=0, min_area_scale=1.0,
-             low_alpha=0, bail_density=None, segment="palette", seg_lambda=0.01, seg_snap=0.0):
+             low_alpha=0, bail_density=None, segment="palette", seg_lambda=0.01, seg_snap=0.0, seg_paints=None, seg_init="palette", seg_model="const"):
     """Return (labels HxW int32 with -1 transparent, palette_rgb (K,3) float, palette_lab, info dict).
 
     segment: "palette" (phase-1: palette components + fixed-area speckle merge) or "ms" (palette components as an
     over-segmentation, then Mumford-Shah region merging with boundary price seg_lambda per 1024 px of image size;
-    every region keeps its own mean colour; seg_snap > 0 snaps region colours closer than seg_snap (OKLab) together).
+    every region keeps its own mean colour; seg_snap > 0 snaps region colours closer than seg_snap (OKLab) together;
+    seg_paints caps the number of distinct paints, e.g. for cut files).
     """
     H, W, _ = rgb.shape
     lab = rgb8_to_oklab(rgb)
@@ -534,7 +535,7 @@ def quantize(rgb, alpha, radius=0.045, max_colors=64, min_area=None, window=2, a
     lbl = assign_labels(lab, valid, pal, flat, window=window)
     if segment == "ms":
         return _quantize_ms(lab, valid, flat, pal, lbl, noise, stats, thin_lines, slivers, radius, seg_lambda,
-                            seg_snap, bail_density, H, W)
+                            seg_snap, bail_density, H, W, seg_paints, seg_init, rgb, seg_model)
     if bail_density:
         from .boundary import label_regions
         n0 = len(label_regions(lbl)[1])
@@ -564,11 +565,18 @@ def quantize(rgb, alpha, radius=0.045, max_colors=64, min_area=None, window=2, a
 
 
 def _quantize_ms(lab, valid, flat, pal, lbl, noise, stats, thin_lines, slivers, radius, seg_lambda, seg_snap,
-                 bail_density, H, W):
+                 bail_density, H, W, seg_paints=None, seg_init="palette", rgb=None, seg_model="const"):
     from .boundary import label_regions
-    from .segment import ms_merge, snap_colors
+    from .segment import ms_merge, reduce_paints, snap_colors
     if thin_lines in (True, "ridge", "both"):
         lbl = rescue_ridges(lab, lbl, pal, valid, noise, stats=stats)
+    if seg_init == "fz":
+        # graph-based over-segmentation of the raw colours (Felzenszwalb & Huttenlocher 2004) instead of palette
+        # components: keeps intermediate colours (shading) that the palette snaps away
+        from skimage.segmentation import felzenszwalb
+        sc = np.sqrt(H * W) / 1024.0
+        lbl = felzenszwalb(rgb, scale=10 * sc, sigma=0.5, min_size=4).astype(np.int32)
+        lbl[~valid] = TRANSPARENT
     R0, _ = label_regions(lbl)
     R0 = np.where(valid, R0, -1)
     n0 = int(R0.max()) + 1
@@ -577,7 +585,7 @@ def _quantize_ms(lab, valid, flat, pal, lbl, noise, stats, thin_lines, slivers, 
         return lbl, oklab_to_rgb8(pal), pal, {"noise": noise, "n_colors": len(pal), "min_area": 0,
                                               "n_regions": int(n0), "bailed": True}, lab
     lam = seg_lambda * np.sqrt(H * W) / 1024.0
-    R1, minfo = ms_merge(R0, lab, lam)
+    R1, minfo = ms_merge(R0, lab, lam, model=seg_model)
     R1 = R1.astype(np.int32)
     K = int(R1.max()) + 1
     m = flat & (R1 >= 0)
@@ -594,6 +602,8 @@ def _quantize_ms(lab, valid, flat, pal, lbl, noise, stats, thin_lines, slivers, 
         lbl = remove_slivers(lbl, lab, newpal, radius)
     if seg_snap > 0:
         lbl, newpal = snap_colors(lbl, newpal, seg_snap)
+    if seg_paints:
+        lbl, newpal = reduce_paints(lbl, newpal, int(seg_paints))
     used = np.unique(lbl[lbl >= 0])
     remap = np.full(len(newpal), -1, np.int32)
     remap[used] = np.arange(len(used))

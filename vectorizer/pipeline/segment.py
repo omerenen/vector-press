@@ -52,29 +52,96 @@ def _region_stats(R, lab, n):
     return area, S, Q
 
 
-def ms_merge(R, lab, lam, max_rounds=400, edge_weight=None, protect=None):
+AFFINE_RIDGE = 1e-4      # slope penalty in (x/1024)^2 units: regions below ~10x10 px stay (nearly) constant
+
+
+def _stats_const(R, lab, n):
+    area, S, Q = _region_stats(R, lab, n)
+    return np.column_stack([area, S, Q])
+
+
+def _obj_const(st):
+    """Sum of squared errors of the best constant colour (st = [n, Sc(3), Q])."""
+    n = np.maximum(st[:, 0], 1e-12)
+    return st[:, 4] - (st[:, 1:4] ** 2).sum(1) / n
+
+
+def _stats_affine(R, lab, n, H, W):
+    r = R.ravel()
+    ok = r >= 0
+    r = r[ok]
+    yy, xx = np.divmod(np.nonzero(ok)[0], W)
+    x = (xx + 0.5) / 1024.0
+    y = (yy + 0.5) / 1024.0
+    c = lab.reshape(-1, 3)[ok].astype(np.float64)
+    cols = [np.ones_like(x), x, y, x * x, x * y, y * y]
+    for ch in range(3):
+        cols.append(c[:, ch])
+    for ch in range(3):
+        cols.append(x * c[:, ch])
+    for ch in range(3):
+        cols.append(y * c[:, ch])
+    cols.append((c * c).sum(1))
+    return np.stack([np.bincount(r, weights=v, minlength=n) for v in cols], 1)
+
+
+def _affine_solve(st, ridge=AFFINE_RIDGE):
+    """Ridge-regularised affine colour fit c = c0 + gx x + gy y per channel. st rows: [n, sx, sy, sxx, sxy, syy,
+    sc(3), sxc(3), syc(3), scc]. Returns (objective (SSE + penalty), coefficients (m, 3 [1,x,y], 3 channels))."""
+    m = len(st)
+    A = np.empty((m, 3, 3))
+    A[:, 0, 0] = st[:, 0]
+    A[:, 0, 1] = A[:, 1, 0] = st[:, 1]
+    A[:, 0, 2] = A[:, 2, 0] = st[:, 2]
+    A[:, 1, 1] = st[:, 3] + ridge
+    A[:, 1, 2] = A[:, 2, 1] = st[:, 4]
+    A[:, 2, 2] = st[:, 5] + ridge
+    A[:, 0, 0] += 1e-12
+    B = np.stack([st[:, 6:9], st[:, 9:12], st[:, 12:15]], 1)            # (m, 3 basis, 3 channels)
+    X = np.linalg.solve(A, B)
+    obj = st[:, 15] - (B * X).sum((1, 2))
+    return np.maximum(obj, 0.0), X
+
+
+def _obj_affine(st):
+    return _affine_solve(st)[0]
+
+
+def ms_merge(R, lab, lam, max_rounds=400, edge_weight=None, model="const", return_stats=False):
     """Greedy Mumford-Shah merging of the regions of R (ids 0..n-1, -1 = excluded).
 
     lam: boundary price (OKLab^2 per px of boundary). edge_weight: optional per-edge factor (same order as
-    region_edges(R)) multiplying the boundary price (e.g. < 1 for strong image edges -> harder to merge).
-    Returns (Rnew with ids 0..m-1, info).
+    region_edges(R)) multiplying the boundary price. model: "const" (piecewise-constant colour) or "affine"
+    (piecewise-affine colour, i.e. every region may be a linear ramp -> smooth shading is not cut into bands).
+    Returns (Rnew with ids 0..m-1, info) (+ final per-region statistics if return_stats).
     """
     n = int(R.max()) + 1 if (R >= 0).any() else 0
     if n <= 1:
-        return R, {"rounds": 0, "n0": n, "n1": n}
-    area, S, Q = _region_stats(R, lab, n)
+        out = (R, {"rounds": 0, "n0": n, "n1": n})
+        return out + (None,) if return_stats else out
+    if model == "affine":
+        H, W = R.shape
+        st = _stats_affine(R, lab, n, H, W)
+        obj = _obj_affine
+    else:
+        st = _stats_const(R, lab, n)
+        obj = _obj_const
+    area = st[:, 0]
     a, b, L = region_edges(R)
     w = np.ones_like(L) if edge_weight is None else edge_weight.astype(np.float64)
     parent = np.arange(n)
-    alive_n = n
     rounds = 0
+    node_obj = obj(st)
     for rounds in range(1, max_rounds + 1):
         if len(a) == 0:
             break
-        mu = S / np.maximum(area, 1)[:, None]
-        d2 = ((mu[a] - mu[b]) ** 2).sum(1)
-        na, nb = area[a], area[b]
-        r = na * nb / (na + nb) * d2 / (lam * L * w)
+        if model == "affine":
+            dE = obj(st[a] + st[b]) - node_obj[a] - node_obj[b]
+        else:
+            mu = st[:, 1:4] / np.maximum(area, 1)[:, None]
+            na, nb = area[a], area[b]
+            dE = na * nb / (na + nb) * ((mu[a] - mu[b]) ** 2).sum(1)
+        r = np.maximum(dE, 0.0) / (lam * L * w)
         # best neighbour per node
         src = np.concatenate([a, b])
         dst = np.concatenate([b, a])
@@ -103,12 +170,13 @@ def ms_merge(R, lab, lam, max_rounds=400, edge_weight=None, protect=None):
         tgt[move] = best[move]
         # apply merges (targets do not move this round -> one level)
         mv = np.nonzero(move)[0]
-        np.add.at(area, tgt[mv], area[mv])
-        np.add.at(S, tgt[mv], S[mv])
-        np.add.at(Q, tgt[mv], Q[mv])
-        area[mv] = 0
+        np.add.at(st, tgt[mv], st[mv])
+        st[mv] = 0
+        area = st[:, 0]
         parent[mv] = tgt[mv]
-        alive_n -= len(mv)
+        recv = np.unique(tgt[mv])
+        node_obj[mv] = 0
+        node_obj[recv] = obj(st[recv])
         # relabel edges, combine duplicates
         a2, b2 = tgt[a], tgt[b]
         keep = a2 != b2
@@ -130,7 +198,10 @@ def ms_merge(R, lab, lam, max_rounds=400, edge_weight=None, protect=None):
     remap = np.full(n, -1, np.int64)
     remap[ids] = np.arange(len(ids))
     Rn = np.where(R >= 0, remap[root[np.maximum(R, 0)]], -1).astype(np.int32)
-    return Rn, {"rounds": rounds, "n0": n, "n1": len(ids)}
+    info = {"rounds": rounds, "n0": n, "n1": len(ids)}
+    if return_stats:
+        return Rn, info, st[ids]
+    return Rn, info
 
 
 def region_means(Rn, lab):
@@ -168,3 +239,29 @@ def snap_colors(lbl, pal, tol):
             grid[cell].append(k)
     newl = np.where(lbl >= 0, target[np.maximum(lbl, 0)], lbl).astype(np.int32)
     return newl, pal
+
+
+def reduce_paints(lbl, pal, k, iters=8):
+    """Map the region colours to at most k paints (area-weighted k-means in OKLab, farthest-point init).
+    Adjacent regions that get the same paint merge. Returns (lbl, pal) with labels into the k paints."""
+    K = len(pal)
+    if K <= k:
+        return lbl, pal
+    w = np.bincount(lbl[lbl >= 0], minlength=K).astype(np.float64)
+    P = pal.astype(np.float64)
+    c = [int(np.argmax(w))]
+    d = ((P - P[c[0]]) ** 2).sum(1)
+    for _ in range(1, k):
+        j = int(np.argmax(d * np.sqrt(w)))         # far and heavy
+        c.append(j)
+        d = np.minimum(d, ((P - P[j]) ** 2).sum(1))
+    C = P[c].copy()
+    for _ in range(iters):
+        a = ((P[:, None] - C[None]) ** 2).sum(-1).argmin(1)
+        for j in range(k):
+            m = a == j
+            if w[m].sum() > 0:
+                C[j] = (P[m] * w[m, None]).sum(0) / w[m].sum()
+    a = ((P[:, None] - C[None]) ** 2).sum(-1).argmin(1)
+    newl = np.where(lbl >= 0, a[np.maximum(lbl, 0)], lbl).astype(np.int32)
+    return newl, C.astype(np.float32)

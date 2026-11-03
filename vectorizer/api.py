@@ -9,7 +9,7 @@ import numpy as np
 from .imageio import ImageLike, load_rgba
 from .pipeline.assemble import build_elements
 from .pipeline.color import oklab_to_rgb8
-from .pipeline.gradients import apply_gradients
+from .pipeline.gradients import apply_gradients, apply_gradients_ms
 from .pipeline.quantize import quantize
 from .pipeline.svgout import svg_document
 from .pipeline.trace import vtracer_trace
@@ -57,6 +57,9 @@ DEFAULTS = dict(
     mix_suppress=False,      # drop palette colours explainable as AA mixtures (line_art/diagram presets)
     segment="palette",       # "palette" (phase 1) | "ms": Mumford-Shah region merging of the palette over-segmentation
     seg_lambda=0.01,         # ms: boundary price (OKLab^2 per px of boundary at 1024 px); larger = fewer regions
+    seg_init="palette",      # ms: initial over-segmentation, "palette" components or "fz" (Felzenszwalb graph segmentation)
+    seg_model="const",       # ms: region colour model "const" | "affine" (piecewise-linear shading, linear-gradient fills)
+    seg_grad_cost=60.0,      # ms+affine: a region gets a gradient fill if it removes > seg_grad_cost*lam of squared error
     seg_snap=0.0,            # ms: snap region colours closer than this (OKLab) to one paint (0 = off)
 )
 
@@ -219,7 +222,9 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
                                                 denoise=opts["denoise"], low_alpha=opts["low_alpha"],
                                                 bail_density=opts["max_region_density"] * 4 if auto else None,
                                                 segment=opts["segment"], seg_lambda=opts["seg_lambda"],
-                                                seg_snap=opts["seg_snap"])
+                                                seg_snap=opts["seg_snap"],
+                                                seg_paints=opts["max_colors"] if opts["cutout"] else None,
+                                                seg_init=opts["seg_init"], seg_model=opts["seg_model"])
         timings["quantize"] = time.perf_counter() - t
         stats.update(qinfo)
         if opts["cutout"]:
@@ -255,7 +260,8 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
             label_fill, defs = None, []
             if opts["gradients"]:
                 t = time.perf_counter()
-                lbl, pal_lab, label_fill, defs = apply_gradients(rgba[..., :3], lbl, pal_lab, opts)
+                grad_fn = apply_gradients_ms if opts["segment"] == "ms" else apply_gradients
+                lbl, pal_lab, label_fill, defs = grad_fn(rgba[..., :3], lbl, pal_lab, opts)
                 pal_rgb = oklab_to_rgb8(pal_lab)
                 timings["gradients"] = time.perf_counter() - t
                 stats["n_gradients"] = len(defs)
