@@ -30,7 +30,9 @@ from vectorizer.render import render_svg  # noqa: E402
 SETS = os.path.join(ROOT, "data", "sets")
 RUNS = os.path.join(ROOT, "eval", "runs")
 REPORTS = os.path.join(ROOT, "eval", "reports")
-CATEGORIES = ["icon", "logo", "flat_illustration", "line_art", "diagram", "gradient", "photo"]
+CATEGORIES = ["icon", "logo", "flat_illustration", "line_art", "diagram", "gradient", "photo",
+              # target benchmark (AI-generated, DALL-E 3)
+              "sticker", "tshirt", "cutfile", "vector_flat", "poster"]
 
 
 def make_method(cfg):
@@ -57,6 +59,17 @@ def make_method(cfg):
                 p.setdefault("preset", cfg["oracle_preset"].get(category, "auto"))
             res = vectorize(rgba, **p)
             return res.svg, res.stats
+        return run
+    if method == "external":
+        d = os.path.join(ROOT, params["dir"])
+
+        def run(rgba, category, item=None):
+            stem = (item or {}).get("stem") or (item or {}).get("id")
+            path = os.path.join(d, f"{stem}.svg")
+            if not os.path.exists(path):
+                raise FileNotFoundError(path)
+            return open(path, encoding="utf-8").read(), {"timings": {}}
+        run.external = True
         return run
     raise ValueError(method)
 
@@ -85,7 +98,10 @@ def evaluate_one(args):
         H, W = gt.shape[:2]
         method = make_method(cfg)
         t0 = time.perf_counter()
-        svg, stats = method(rgba, item["category"])
+        if getattr(method, "external", False):
+            svg, stats = method(rgba, item["category"], item)
+        else:
+            svg, stats = method(rgba, item["category"])
         rec["time"] = time.perf_counter() - t0
         rec["timings"] = stats.get("timings", {})
         rec["detected_type"] = stats.get("image_type")
@@ -132,6 +148,10 @@ def evaluate_one(args):
             pr, per = M.primitive_recovery(svg, item.get("primitives", []), sx, sy, ox, oy)
             rec["prim_recovery"] = pr
             rec["prim_per_type"] = per
+        if cfg.get("printcut"):
+            from eval.printcut import printcut_metrics
+            for k, v in printcut_metrics(svg, W, H).items():
+                rec["pc_" + k] = v
         rec["composite"] = M.composite(rec)
     except Exception as e:
         rec["valid"] = False
@@ -142,7 +162,9 @@ def evaluate_one(args):
 
 KEYS = ["composite", "ssim", "ssim_in", "psnr", "msssim", "gmsd", "de_mean", "de_p95", "edge_f", "lpips", "alpha_iou",
         "edge_dev", "mismatch4x", "gap_px", "corner_recall", "corner_err", "prim_recovery",
-        "n_paths", "n_nodes", "n_primitives", "bytes", "gz_bytes", "time"]
+        "n_paths", "n_nodes", "n_primitives", "bytes", "gz_bytes", "time",
+        "pc_open_subpaths", "pc_self_intersections", "pc_overlap_ratio", "pc_n_colors", "pc_tiny_islands",
+        "pc_thin_features", "pc_thin_area_mm2", "pc_n_nodes"]
 
 
 def summarize(recs):
@@ -202,6 +224,8 @@ def run(cfg, split, workers=4, limit=None, ids=None, categories=None):
         items = [it for it in items if it["id"] in ids]
     if categories:
         items = [it for it in items if it["category"] in categories]
+    if cfg.get("method") == "external":
+        items = [it for it in items if it.get("vectorizer_ai", True)]
     if limit:
         items = items[:limit]
     os.makedirs(os.path.join(RUNS, cfg["name"], split, "svgs"), exist_ok=True)
@@ -243,6 +267,7 @@ if __name__ == "__main__":
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--limit", type=int)
     ap.add_argument("--ids", nargs="*")
+    ap.add_argument("--ids-file", help="file with one item id per line (fixed development subsets: eval/subsets/*.txt)")
     ap.add_argument("--categories", nargs="*")
     ap.add_argument("--name")
     ap.add_argument("--set", nargs="*", default=[], help="override params: key=value (YAML value)")
@@ -253,5 +278,8 @@ if __name__ == "__main__":
     for kv in a.set:
         k, v = kv.split("=", 1)
         cfg.setdefault("params", {})[k] = yaml.safe_load(v)
-    recs, summ = run(cfg, a.split, a.workers, a.limit, a.ids, a.categories)
+    ids = a.ids
+    if a.ids_file:
+        ids = [l.strip() for l in open(a.ids_file) if l.strip() and not l.startswith("#")]
+    recs, summ = run(cfg, a.split, a.workers, a.limit, ids, a.categories)
     print(fmt_table(summ))

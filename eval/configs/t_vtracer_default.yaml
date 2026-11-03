@@ -1,0 +1,6 @@
+name: t_vtracer_default
+description: Plain VTracer defaults on the target set.
+method: vtracer
+params: {}
+lpips: true
+printcut: true

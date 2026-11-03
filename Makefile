@@ -3,13 +3,21 @@ PY ?= python
 EXP ?= final
 SPLIT ?= test
 
-.PHONY: setup data test eval eval-all report bench sheets clean
+.PHONY: setup data target eval-target test eval eval-all report bench sheets clean
 
 setup:
 	$(PY) -m pip install -r requirements.txt
 
 data:            ## build dev + held-out test sets (needs npm for the Iconify packages)
 	$(PY) -m data.build
+
+target:          ## AI-generated target benchmark (DALL-E 3, CC0) -> splits tdev / ttest (~5 GB download, cached captions)
+	$(PY) -m data.target_dalle3 --n 120
+	$(PY) -m data.build --proc2
+	$(PY) -m data.fetch_lpips
+
+eval-target:     ## primary score: held-out target split (ttest), baselines + presets
+	for c in t_vtracer_default t_vtracer_tuned t_final t_print t_cut; do $(PY) -m eval.run --config eval/configs/$$c.yaml --split ttest; done
 
 test:
 	$(PY) -m pytest -q

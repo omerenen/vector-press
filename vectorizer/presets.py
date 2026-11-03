@@ -16,6 +16,12 @@ PHOTO = dict(engine="vtracer_raw", max_side=1024,
                                  length_threshold=4.0))
 PHOTO_POSTERIZE = dict(merge_frac=0.6, mix_suppress=False, gradients=True, max_side=640)
 
+# Output-intent presets: applied on top of the content preset chosen by the classifier.
+CUT = dict(cutout=True, seam_width=0.0, gradients=False, max_colors=8, merge_frac=1.0, drop_background=True,
+           min_feature_mm=0.5, subpixel=True)
+PRINT = dict(cutout=False, gradients=True)
+INTENTS = {"cut": CUT, "print": PRINT}
+
 PRESETS = {
     "logo": FLAT,
     "icon": FLAT,
@@ -33,6 +39,8 @@ TYPE_TO_PRESET = {"icon": "icon", "logo": "logo", "flat_illustration": "logo", "
 
 
 def preset_options(name: str) -> dict:
+    if name in INTENTS:
+        return dict(INTENTS[name])
     if name not in PRESETS:
         raise ValueError(f"unknown preset {name!r}; choose from auto, {', '.join(sorted(PRESETS))}")
     return dict(PRESETS[name])

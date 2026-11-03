@@ -218,3 +218,51 @@ tuned VTracer 0.833 → final 0.919.
 
 Fresh-clone test re-run on the final commit 6f3dd9e: 47 passed; `python -m vectorizer` and batch `vectorize in -o out --stats` OK.
 | best-v4 | 9c82f5b | dev 0.904 / test 0.901 | final: review fixes (fallback, alpha, max mode, licences) |
+
+
+# PHASE 2 — target benchmark, print/cut readiness, rethink bottlenecks (2026-11-03)
+
+## P2-1 Target benchmark (AI-generated art)
+`data/target/` does not exist in the repository (only branch `claude/laughing-rubin-n46tic`), so no vectorizer.ai outputs
+are available. HuggingFace became reachable in this phase, so instead of a synthetic stand-in the target set is built from
+**real AI-generated images with a verified permissive license**:
+- first attempt: DiffusionDB (`poloclub/diffusiondb`, CC0-1.0, Stable Diffusion 1.x). Rejected after looking at the
+  montage: SD 1.x mostly ignored the style keywords (sticker / vector / logo prompts produced photoreal portraits, several of
+  real public figures) → poor proxy for the use case and unsuitable for committed contact sheets. Script kept
+  (`data/target_fetch.py`, with an HTTP-range zip reader).
+- adopted: **`OpenDatasets/dalle-3-dataset` (CC0-1.0, DALL-E 3 images with their prompts)**, `data/target_dalle3.py`:
+  captions of all 67 shards scanned (1 423 use-case matches: cutfile/line-art/icon 405, logo 331, poster 290,
+  vector/flat 198, t-shirt 186, sticker 13), one image per distinct prompt, greedy quota-balanced selection of parquet row
+  groups (≤3 images of a category per row group, because one user's prompt series clusters in a row group), no manual
+  picking. A first, unbalanced selection (rank row groups by match count) gave 55 posters / 48 logos / 2 cut-files / 0
+  stickers → replaced. Split by hash into `tdev` (tuning) and `ttest` (held-out, never tuned on). Native DALL-E 3 sizes
+  (1024², 1792×1024, 1024×1792). No ground truth → fidelity is measured against the input image.
+- `data/target_local.py` + `eval/configs/vectorizer_ai.yaml` (method `external`) are ready for a real `data/target/`
+  folder with `data/target/vectorizer_ai/<stem>.svg`.
+- LPIPS is now computed (AlexNet weights fetched from a HuggingFace mirror, accepted only with the official SHA-256,
+  `data/fetch_lpips.py`; download.pytorch.org is still blocked).
+
+## P2-1b Overfitting check — procedural scenes with a new seed and different ranges (`python -m data.build --proc2`)
+Split `proc2`: 60 scenes, seed 777, canvases 640–1024 px (phase 1: 256–512), 8–18 shapes (4–12), 5–9 diagram boxes
+(3–7) with thinner strokes 0.9–2.5 px (1.5–3.5), 4–9 gradient shapes (2–6), 6–12 strokes 0.8–3.0 px (4–9, 1.2–4.5).
+| method | composite | SSIM | edge_dev | corner recall | prim | gz |
+|---|---|---|---|---|---|---|
+| VTracer default | 0.769 | 0.956 | 0.920 | 0.354 | 0 | 105 116 |
+| VTracer tuned | 0.796 | 0.961 | 0.840 | 0.330 | 0 | 120 171 |
+| current final (best-v4) | **0.885** | **0.981** | **0.329** | **0.527** | 0.306 | **11 626** |
+Gain over tuned VTracer +0.089 (phase-1 test procedural items: +0.101) → no strong overfitting to the phase-1 generator
+ranges; corner recall and primitive recovery are lower on these busier scenes (work items 3/4).
+
+## P2-2 Print / cut-readiness metrics (`eval/printcut.py`, enabled with `printcut: true`)
+At a physical output width of 100 mm: open subpaths, self-intersecting subpaths (flattened outlines, shapely),
+overlap ratio (Σ shape areas / union − 1; 0 = pure cutout), distinct paints, per cut layer (fill paint) tiny islands
+(equivalent diameter < 0.5 mm) and thin features (parts thinner than 0.5 mm: opening with a 0.5 mm disk; component counted if
+2·max distance < 0.5 mm or >20 % of its area is thin), thin area in mm², node count. Format-agnostic (works on VTracer output).
+First observations (phase-1 test SVGs): our stacked output has overlap 0.2–1.1 (filled holes) but VTracer's is higher
+(0.4–1.1); we have a few *real* self-intersections (e.g. test_0049: 5 crossings from curve fitting at junctions) where
+VTracer has none → assigned to work item A (fit.py).
+New presets (`vectorizer/presets.py`, applied on top of the classifier's content preset):
+- `cut`: cutout geometry (every region with its real holes, no stacking, no seams, one path per colour), ≤8 flat colours,
+  no gradients, background colour dropped, minimum feature 0.5 mm at `cut_width_mm` (100 mm) enforced on the label map
+  (per-colour opening + island merge, `vectorizer/pipeline/cut.py`), optional `silhouette=True` (single colour).
+- `print`: stacked, full fidelity (= content preset; gradients on).

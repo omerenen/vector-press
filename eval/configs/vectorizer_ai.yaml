@@ -1,0 +1,6 @@
+name: vectorizer_ai
+description: Pre-made vectorizer.ai SVGs from data/target/vectorizer_ai/<stem>.svg (items without one are skipped).
+method: external
+params: {dir: data/target/vectorizer_ai}
+lpips: true
+printcut: true

@@ -14,7 +14,7 @@ from .pipeline.quantize import quantize
 from .pipeline.svgout import svg_document
 from .pipeline.trace import vtracer_trace
 from .pipeline.classify import classify
-from .presets import TYPE_TO_PRESET, preset_options
+from .presets import INTENTS, TYPE_TO_PRESET, preset_options
 
 DEFAULTS = dict(
     engine="graph",          # "graph" (shared boundary graph) | "vtracer" (palette-cleaned VTracer) | "vtracer_raw"
@@ -36,7 +36,12 @@ DEFAULTS = dict(
     upscale_scaled=("corner_scale", "seam_width"),  # px-unit options rescaled when upscaling
     upscale_max_side=3072,   # max mode never processes more than this many px on the long side
     max_region_density=0.008,  # preset="auto": >8 regions per 1000 px (dev: flat art <= 5.7, photos 18-26) -> photo engine
-    low_alpha=24,            # flat semi-transparent areas with alpha >= this are kept (with fill-opacity)
+    low_alpha=24,
+    cutout=False,            # cut-file geometry: real holes, no stacking overlaps, no seams, one path per colour
+    drop_background=False,   # cut: remove the background colour (it is not cut / weeded)
+    silhouette=False,        # cut: single-colour silhouette
+    min_feature_mm=0.0,      # cut: remove features thinner than this at the physical output width
+    cut_width_mm=100.0,      # cut: physical output width used for the size thresholds            # flat semi-transparent areas with alpha >= this are kept (with fill-opacity)
     seam_width=1.0,          # width of the under-stroke along shared borders (removes AA seams)
     line_tls=0.45,           # straight-line test tolerance on TLS fit (px)
     sagitta_tol=0.25,        # staircase-vs-curve test: max parabola sagitta for a straight line (px), 0 = off
@@ -151,6 +156,9 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
     opts = dict(DEFAULTS)
     auto = preset == "auto"
     tiny = H == 0 or W == 0 or min(H, W) < 4 or H * W <= 64
+    intent = None
+    if preset in INTENTS:                    # "cut" / "print": content preset from the classifier + intent overrides
+        intent, preset, auto = preset, "auto", True
     if auto:
         t = time.perf_counter()
         itype, feats = classify(rgba) if not tiny else ("icon", {})
@@ -158,7 +166,13 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
         stats["image_type"] = itype
         preset = TYPE_TO_PRESET[itype]
     opts.update(preset_options(preset))
-    stats["preset"] = preset
+    if intent:
+        if preset in ("photo",):             # photos: posterize through the region engine for cut/print intents
+            opts.update(preset_options("photo_posterize"))
+        opts.update(INTENTS[intent])
+        stats["intent"] = intent
+        auto = intent != "cut"               # cut never falls back to the VTracer photo engine
+    stats["preset"] = preset if not intent else f"{intent}:{preset}"
     if mode == "max" and preset in MAX_MODE_PRESETS:
         opts.update(MAX_MODE)
     opts.update({k: v for k, v in _map_user_options(options).items() if v is not None})
@@ -203,6 +217,20 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
                                                 bail_density=opts["max_region_density"] * 4 if auto else None)
         timings["quantize"] = time.perf_counter() - t
         stats.update(qinfo)
+        if opts["cutout"]:
+            from .pipeline import cut as _cut
+            t = time.perf_counter()
+            if opts["silhouette"]:
+                lbl, pal_lab = _cut.silhouette(lbl, pal_lab)
+                pal_rgb = oklab_to_rgb8(pal_lab)
+            px_per_mm = W0 / float(opts["cut_width_mm"]) * (W / W0)
+            if opts["min_feature_mm"]:
+                lbl = _cut.enforce_min_feature(lbl, opts["min_feature_mm"] * px_per_mm, pal_lab)
+            if opts["drop_background"]:
+                bgl = _cut.background_label(lbl)
+                if bgl >= 0 and (lbl == bgl).mean() < 0.95:
+                    lbl = np.where(lbl == bgl, -1, lbl)
+            timings["cut"] = time.perf_counter() - t
         if auto and qinfo["n_regions"] > 300 and qinfo["n_regions"] > H * W * opts["max_region_density"]:
             # region explosion (texture / noise / star fields misclassified as flat art): photo engine
             stats["fallback"] = f"photo ({qinfo['n_regions']} regions)"

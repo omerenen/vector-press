@@ -5,6 +5,8 @@ scikit-image==0.26.0
 pillow==13.0.0
 vtracer==0.6.15
 resvg_py==0.5.0
-# evaluation / tests
+# evaluation / tests / dataset builders
+shapely==2.2.0
+pyarrow==26.0.1
 PyYAML==6.0.3
 pytest==9.2.0

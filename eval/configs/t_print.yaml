@@ -1,0 +1,6 @@
+name: t_print
+description: Current pipeline, preset print, on the target set (LPIPS + print/cut metrics).
+method: pipeline
+params: {preset: print}
+lpips: true
+printcut: true

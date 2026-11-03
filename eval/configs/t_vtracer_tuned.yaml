@@ -1,0 +1,29 @@
+name: t_vtracer_tuned
+method: vtracer
+description: VTracer with phase-1 dev-tuned parameters, mapped per target category
+  (logo->logo, sticker/tshirt/vector_flat->flat_illustration, poster->gradient, cutfile->line_art).
+  Oracle category.
+params: {}
+per_category:
+  logo:
+    filter_speckle: 8
+    color_precision: 7
+    layer_difference: 32
+  sticker: &id001
+    filter_speckle: 2
+    color_precision: 6
+    layer_difference: 16
+  tshirt: *id001
+  vector_flat: *id001
+  poster:
+    filter_speckle: 2
+    color_precision: 8
+    layer_difference: 8
+    corner_threshold: 30
+    length_threshold: 4.0
+  cutfile:
+    filter_speckle: 2
+    color_precision: 6
+    layer_difference: 32
+lpips: true
+printcut: true

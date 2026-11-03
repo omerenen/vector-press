@@ -320,12 +320,45 @@ def build(per_cat=20, seed=1234):
     return manifests
 
 
+def build_proc2(seed=777, per_kind=15):
+    """Procedural-only set with a NEW seed and DIFFERENT ranges (bigger canvases, more shapes, other stroke widths)."""
+    from data import procedural as P
+    P.P.update(shapes_n=(8, 18), diagram_n=(5, 9), diagram_sw=(0.9, 2.5), grad_n=(4, 9), line_n=(6, 12),
+               line_sw=(0.8, 3.0))
+    rng = random.Random(f"proc2-{seed}")
+    cat_of = {"shapes": "flat_illustration", "diagram": "diagram", "gradient": "gradient", "line_art": "line_art"}
+    man, idx = [], 0
+    for kind in ("shapes", "diagram", "gradient", "line_art"):
+        for j in range(per_kind):
+            S = rng.choice([640, 768, 896, 1024])
+            ar = rng.uniform(0.6, 1.6)
+            W, H = (S, int(S / ar)) if ar > 1 else (int(S * ar), S)
+            sc = GENERATORS[kind](random.Random(f"proc2-{seed}-{kind}-{j}"), W, H)
+            gt = render_svg(sc.svg, W, H)
+            dname = pick_degradation(rng)
+            inp, params = degrade(gt, dname, rng)
+            iid = f"proc2_{idx:04d}"
+            idx += 1
+            m = write_item("proc2", iid, cat_of[kind], f"procedural2:{kind}:{j}", "CC0-1.0 (generated)", gt, inp,
+                           {"primitives": sc.primitives, "corners": sc.corners, "degradation": params}, svg=sc.svg)
+            man.append(m)
+            print("proc2", iid, kind, dname, flush=True)
+    with open(os.path.join(SETS, "proc2", "manifest.json"), "w") as f:
+        json.dump(man, f, indent=1)
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--per-cat", type=int, default=20)
     ap.add_argument("--seed", type=int, default=1234)
+    ap.add_argument("--proc2", action="store_true",
+                    help="overfitting check: procedural scenes only, new seed + different parameter ranges -> split proc2")
     a = ap.parse_args()
     import shutil
-    if os.path.isdir(SETS):
-        shutil.rmtree(SETS)
-    build(a.per_cat, a.seed)
+    if a.proc2:
+        shutil.rmtree(os.path.join(SETS, "proc2"), ignore_errors=True)
+        build_proc2(seed=a.seed if a.seed != 1234 else 777)
+    else:
+        for sp in ("dev", "test"):
+            shutil.rmtree(os.path.join(SETS, sp), ignore_errors=True)
+        build(a.per_cat, a.seed)

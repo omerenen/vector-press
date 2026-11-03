@@ -93,6 +93,11 @@ def build_elements(lbl, palette_rgb, opts, timings=None, label_fill=None, ctx=No
         opacity[(opacity >= 0.98) | (frac < 0.5)] = 1.0
     semi = opacity < 1.0
     depth = _containment(regions, R, lbl, semi)
+    cutout = bool(opts.get("cutout"))
+    if cutout:
+        for r in regions:
+            r.fill_holes = False                 # real holes; regions tile the plane without overlap
+        depth[:] = 0
     converted, stroke_els = set(), []
     if opts.get("centerline"):
         from .centerline import centerline_regions
@@ -144,7 +149,7 @@ def build_elements(lbl, palette_rgb, opts, timings=None, label_fill=None, ctx=No
                 for li in loops:
                     toks += loop_d([oriented(cid, rev) for cid, rev in r.loops[li]], prec)
                 fills.setdefault(fill_attr, [fill_attr, []])[1].extend(toks)
-            if seam_w > 0 and not semi[r.rid]:
+            if seam_w > 0 and not semi[r.rid] and not cutout:
                 for li in loops:
                     for cid, rev in r.loops[li]:
                         c = chains[cid]

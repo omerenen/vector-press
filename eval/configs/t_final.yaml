@@ -1,0 +1,6 @@
+name: t_final
+description: Current pipeline, preset auto, on the target set (LPIPS + print/cut metrics).
+method: pipeline
+params: {preset: auto}
+lpips: true
+printcut: true

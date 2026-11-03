@@ -1,0 +1,19 @@
+# fixed target-dev development subset (every 3rd tdev item)
+tdev_0000
+tdev_0003
+tdev_0006
+tdev_0009
+tdev_0012
+tdev_0015
+tdev_0018
+tdev_0021
+tdev_0024
+tdev_0027
+tdev_0030
+tdev_0033
+tdev_0036
+tdev_0039
+tdev_0042
+tdev_0045
+tdev_0048
+tdev_0051

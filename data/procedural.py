@@ -15,6 +15,12 @@ import random
 from dataclasses import dataclass, field
 
 
+# Generator ranges. Defaults reproduce the phase-1 dev/test sets exactly; data.build --proc2 changes them
+# (overfitting check: new seed + different ranges).
+P = dict(shapes_n=(4, 12), shape_scale=1.0, diagram_n=(3, 7), diagram_sw=(1.5, 3.5), grad_n=(2, 6),
+         line_n=(4, 9), line_sw=(1.2, 4.5))
+
+
 @dataclass
 class Scene:
     svg: str
@@ -172,8 +178,8 @@ def gen_shapes(rng: random.Random, W: int, H: int) -> Scene:
     pal = _palette(rng, ncol + 1)
     bg = pal[0] if rng.random() < 0.6 else rng.choice(["#ffffff", "#f4f1ea", "#1d1f2b"])
     items = []
-    for _ in range(rng.randint(4, 12)):
-        items.append(_make_shape(rng, W, H, fill=rng.choice(pal[1:])))
+    for _ in range(rng.randint(*P["shapes_n"])):
+        items.append(_make_shape(rng, W * P["shape_scale"], H * P["shape_scale"], fill=rng.choice(pal[1:])))
     return _finish(rng, W, H, "shapes", bg, items)
 
 
@@ -181,9 +187,9 @@ def gen_diagram(rng: random.Random, W: int, H: int) -> Scene:
     pal = _palette(rng, 5)
     bg = rng.choice(["#ffffff", "#fafafa", "#f5f7fb"])
     stroke = rng.choice(["#222222", "#333a45", "#1f3b73"])
-    sw = rng.uniform(1.5, 3.5)
+    sw = rng.uniform(*P["diagram_sw"])
     items = []
-    n = rng.randint(3, 7)
+    n = rng.randint(*P["diagram_n"])
     boxes = []
     tries = 0
     while len(boxes) < n and tries < 200:
@@ -268,7 +274,7 @@ def gen_gradient(rng: random.Random, W: int, H: int) -> Scene:
 
     bgfill = lin(pal[0], pal[1]) if rng.random() < 0.6 else rng.choice(["#ffffff", pal[0]])
     items = []
-    for _ in range(rng.randint(2, 6)):
+    for _ in range(rng.randint(*P["grad_n"])):
         r = rng.random()
         fill = lin(*rng.sample(pal, 2)) if r < 0.4 else (rad(*rng.sample(pal, 2)) if r < 0.7 else rng.choice(pal))
         items.append(_make_shape(rng, W, H, kind=rng.choice(["circle", "ellipse", "rect", "roundrect", "blob", "polygon"]), fill=fill))
@@ -281,10 +287,10 @@ def gen_gradient(rng: random.Random, W: int, H: int) -> Scene:
 def gen_line_art(rng: random.Random, W: int, H: int) -> Scene:
     ink = rng.choice(["#111111", "#202733", "#3b2a1a", "#0b2d5c"])
     bg = rng.choice(["#ffffff", "#fbf8f1", "#f3f3f3"])
-    sw = rng.uniform(1.2, 4.5)
+    sw = rng.uniform(*P["line_sw"])
     els = []
     S = min(W, H)
-    for _ in range(rng.randint(4, 9)):
+    for _ in range(rng.randint(*P["line_n"])):
         t = rng.random()
         if t < 0.45:  # smooth curve
             pts = [(rng.uniform(0.05, 0.95) * W, rng.uniform(0.05, 0.95) * H) for _ in range(rng.randint(3, 5))]
