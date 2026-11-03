@@ -143,3 +143,4 @@ primitive recovery 0.287→**0.382**, diagram +0.014 (PSNR +1.14 dB), icon +0.00
 | tag | commit | dev composite | note |
 |---|---|---|---|
 | best-v1 | e07f24d | 0.895 | graph engine + presets + gradients + denoise (exp_010) |
+| best-v2 | 48e89b6 | 0.901 | + sub-pixel boundaries (exp_011) |
