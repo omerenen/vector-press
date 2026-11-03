@@ -60,6 +60,8 @@ DEFAULTS = dict(
     seg_init="palette",      # ms: initial over-segmentation, "palette" components or "fz" (Felzenszwalb graph segmentation)
     seg_model="const",       # ms: region colour model "const" | "affine" (piecewise-linear shading, linear-gradient fills)
     seg_grad_cost=60.0,      # ms+affine: a region gets a gradient fill if it removes > seg_grad_cost*lam of squared error
+    seg_pal_snap=0.02,       # ms: regions within this OKLab distance of their majority palette colour use that colour
+    seg_premerge=False,      # ms: run the phase-1 speckle/sliver clean-up before the MS merge
     seg_snap=0.0,            # ms: snap region colours closer than this (OKLab) to one paint (0 = off)
 )
 
@@ -224,7 +226,8 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
                                                 segment=opts["segment"], seg_lambda=opts["seg_lambda"],
                                                 seg_snap=opts["seg_snap"],
                                                 seg_paints=opts["max_colors"] if opts["cutout"] else None,
-                                                seg_init=opts["seg_init"], seg_model=opts["seg_model"])
+                                                seg_init=opts["seg_init"], seg_model=opts["seg_model"],
+                                                seg_pal_snap=opts["seg_pal_snap"], seg_premerge=opts["seg_premerge"])
         timings["quantize"] = time.perf_counter() - t
         stats.update(qinfo)
         if opts["cutout"]:

@@ -307,3 +307,32 @@ Consequence: 37/53 images go to VTracer (photo parameters, ≤1024 px) and ~8 im
 worse than VTracer default (0000, 0017, 0020, 0024, 0039, 0045, 0048, 0049).
 Root cause in one sentence: the clean-up stage decides by *area* only (fixed speckle size), so it has no notion of how
 much a merge costs in colour error versus how much boundary (= SVG bytes) it saves.
+
+### B-1 Alternatives for the segmentation stage (raster-level screening, then full pipeline)
+Screening metric (cheap, same for every segmenter): render every region with its mean colour, compute the composite's
+fidelity part (SSIM/PSNR/ΔE/edge-F/GMSD vs the input) and the total boundary length (crack edges = the SVG's cost driver).
+tdev_0051 / 0003 / 0040 / 0039 / 0012 / 0024, at several detail levels each (`/tmp` script, numbers in RESEARCH.md):
+- current palette + fixed-area merge: 0040 135 k boundary px → fid 0.811; 0051 66.6 k → 0.873.
+- **Mumford–Shah region merging (RAG, colour + boundary length) on the palette over-segmentation**: 0040 141 k → 0.839,
+  0051 64.5 k → 0.876 (better at equal or lower boundary length on every image; scale-aware).
+- Felzenszwalb (graph-based) alone: far worse at equal boundary length (0051: 152 k → 0.819; leaks + fragments).
+- Felzenszwalb fine over-segmentation + MS merging: same curve as MS, slightly better at high detail on 3/6 images
+  (0040 131 k → 0.857), worse on 0024 → kept as option `seg_init="fz"` for the pipeline test.
+- SLIC + mean colours: much worse (0051 6 800 regions → 0.751). L0 gradient smoothing (Xu et al. 2011) + palette:
+  no better than MS and 25 s per image → rejected.
+MS merge cost on 1 MP: 0.3–1 s (vectorised rounds, 10–16 rounds).
+
+### B-2 `segment="ms"` in the pipeline (tdev_small, t_final settings, 18 images)
+| run | composite | SSIM | PSNR | ΔE | edge-F | GMSD | LPIPS | paths (med) | gz (med) |
+|---|---|---|---|---|---|---|---|---|---|
+| phase2-base (t_final) | 0.689 | 0.788 | 24.2 | 3.60 | 0.864 | 0.125 | 0.182 | 7 735 | 1 559 KB |
+| VTracer default | 0.678 | 0.779 | 22.4 | 4.15 | 0.893 | 0.121 | 0.184 | 10 641 | 2 361 KB |
+| ms λ=0.01 | **0.723** | **0.821** | **25.1** | **3.18** | **0.896** | **0.105** | **0.162** | 12 636 | 1 645 KB |
+| ms λ=0.03 | 0.705 | 0.808 | 25.1 | 3.31 | 0.856 | 0.127 | 0.168 | 6 458 | 570 KB |
+The early bail-out now uses a pure-noise test (>0.25 raw components per px); the density fallback in api.py is unchanged
+but sees the MS region count. Per image: clean cartoon / logo art wins big (0051 0.734→0.824 at 62 KB instead of
+1 064 KB, 0012 0.575→0.716, 0042 0.863→0.886); heavy-texture images (0003 fur, 0045/0048 painterly) are better on the
+composite with the VTracer fallback (0003: MS 0.589 / 615 KB vs VTracer 0.720 / 4.5 MB) - the metric rewards
+reproducing texture; λ=0.01 routes more of them to the fallback than λ=0.03, hence its higher score.
+Dev (phase-1, 44 images): ms λ=0.01 regresses line_art (−0.016: thin AA lines took their diluted region mean colour,
+6→74 paths because every region had its own paint) and photo (dev_0123 no longer falls back) → fix B-3.

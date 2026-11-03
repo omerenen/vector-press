@@ -505,7 +505,7 @@ def label_medians(lbl, lab, flat, fallback):
 
 def quantize(rgb, alpha, radius=0.045, max_colors=64, min_area=None, window=2, alpha_threshold=128,
              thin_lines=True, mix_suppress=True, slivers=True, merge_frac=0.6, denoise=0, min_area_scale=1.0,
-             low_alpha=0, bail_density=None, segment="palette", seg_lambda=0.01, seg_snap=0.0, seg_paints=None, seg_init="palette", seg_model="const"):
+             low_alpha=0, bail_density=None, segment="palette", seg_lambda=0.01, seg_snap=0.0, seg_paints=None, seg_init="palette", seg_model="const", seg_pal_snap=0.02, seg_premerge=False):
     """Return (labels HxW int32 with -1 transparent, palette_rgb (K,3) float, palette_lab, info dict).
 
     segment: "palette" (phase-1: palette components + fixed-area speckle merge) or "ms" (palette components as an
@@ -516,7 +516,7 @@ def quantize(rgb, alpha, radius=0.045, max_colors=64, min_area=None, window=2, a
     H, W, _ = rgb.shape
     lab = rgb8_to_oklab(rgb)
     valid = alpha >= alpha_threshold
-    if low_alpha and low_alpha < alpha_threshold:
+    if low_alpha and low_alpha < alpha_threshold and not valid.all():
         # flat semi-transparent areas (shadows, translucent parts) are kept; anti-aliased edges
         # against transparency (alpha ramps) still use the 50 % threshold
         a = alpha.astype(np.int16)
@@ -535,7 +535,10 @@ def quantize(rgb, alpha, radius=0.045, max_colors=64, min_area=None, window=2, a
     lbl = assign_labels(lab, valid, pal, flat, window=window)
     if segment == "ms":
         return _quantize_ms(lab, valid, flat, pal, lbl, noise, stats, thin_lines, slivers, radius, seg_lambda,
-                            seg_snap, bail_density, H, W, seg_paints, seg_init, rgb, seg_model)
+                            seg_snap, bail_density, H, W, seg_paints, seg_init, rgb, seg_model, seg_pal_snap,
+                            premerge_area=(int(np.clip(round(H * W / 25000 * min_area_scale), 3 if min_area_scale >= 1
+                                                       else 2, 400)) if min_area is None else min_area)
+                            if seg_premerge else 0)
     if bail_density:
         from .boundary import label_regions
         n0 = len(label_regions(lbl)[1])
@@ -565,11 +568,20 @@ def quantize(rgb, alpha, radius=0.045, max_colors=64, min_area=None, window=2, a
 
 
 def _quantize_ms(lab, valid, flat, pal, lbl, noise, stats, thin_lines, slivers, radius, seg_lambda, seg_snap,
-                 bail_density, H, W, seg_paints=None, seg_init="palette", rgb=None, seg_model="const"):
+                 bail_density, H, W, seg_paints=None, seg_init="palette", rgb=None, seg_model="const",
+                 seg_pal_snap=0.02, premerge_area=0):
     from .boundary import label_regions
     from .segment import ms_merge, reduce_paints, snap_colors
     if thin_lines in (True, "ridge", "both"):
         lbl = rescue_ridges(lab, lbl, pal, valid, noise, stats=stats)
+    if premerge_area:
+        n_raw = len(label_regions(lbl)[1])
+        if not (bail_density and n_raw > 0.25 * H * W):
+            # phase-1 clean-up first (AA fragments / speckles of flat art), MS then merges what it could not
+            lbl = merge_small_regions(lbl, pal, premerge_area)
+            if slivers:
+                lbl = remove_slivers(lbl, lab, pal, radius)
+    lpal = lbl
     if seg_init == "fz":
         # graph-based over-segmentation of the raw colours (Felzenszwalb & Huttenlocher 2004) instead of palette
         # components: keeps intermediate colours (shading) that the palette snaps away
@@ -591,13 +603,24 @@ def _quantize_ms(lab, valid, flat, pal, lbl, noise, stats, thin_lines, slivers, 
     m = flat & (R1 >= 0)
     cnt = np.bincount(R1[m], minlength=K).astype(np.float64)
     S = np.stack([np.bincount(R1[m], weights=lab[..., c][m], minlength=K) for c in range(3)], 1)
-    ma = R1 >= 0
-    cnt_all = np.bincount(R1[ma], minlength=K).astype(np.float64)
-    S_all = np.stack([np.bincount(R1[ma], weights=lab[..., c][ma], minlength=K) for c in range(3)], 1)
+    # majority palette colour of every region (thin regions without flat pixels, e.g. AA lines, take the pure
+    # palette colour instead of their AA-diluted mean; regions close to it share the palette label = one paint)
+    Kp = len(pal)
+    ma = (R1 >= 0) & (lpal >= 0)
+    if K * Kp <= 50_000_000:
+        h = np.bincount(R1[ma].astype(np.int64) * Kp + lpal[ma], minlength=K * Kp).reshape(K, Kp)
+        maj = h.argmax(1)
+    else:
+        maj = np.zeros(K, np.int64)
     use_flat = cnt >= 3
-    newpal = np.where(use_flat[:, None], S / np.maximum(cnt, 1)[:, None],
-                      S_all / np.maximum(cnt_all, 1)[:, None]).astype(np.float32)
-    lbl = R1
+    newpal = np.where(use_flat[:, None], S / np.maximum(cnt, 1)[:, None], pal[maj]).astype(np.float32)
+    if seg_pal_snap > 0:
+        snap = np.sqrt(((newpal - pal[maj]) ** 2).sum(1)) < seg_pal_snap
+    else:
+        snap = np.zeros(K, bool)
+    lab_id = np.where(snap, maj, Kp + np.cumsum(~snap) - 1)
+    newpal = np.concatenate([pal.astype(np.float32), newpal[~snap]], 0)
+    lbl = np.where(R1 >= 0, lab_id[np.maximum(R1, 0)], TRANSPARENT).astype(np.int32)
     if slivers:
         lbl = remove_slivers(lbl, lab, newpal, radius)
     if seg_snap > 0:
