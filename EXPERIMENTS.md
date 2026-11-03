@@ -421,3 +421,11 @@ nodes / tiny islands up on the items that leave the coarse noise branch (they ha
 cand4 = cand3 + `fit_profile="tight"`: +0.001 more (region-engine items +0.003…+0.006), gz +2 %.
 Per-image oracle over {base, VTracer photo params, region FLAT, region GRADIENT} on tdev_small = 0.735 → cand4 (0.726)
 recovers 80 % of the oracle gap.
+
+### C-9c Old max mode on tdev_small (phase2-base settings + mode=max): +0.032 — but not from resolution
+Per item the gain sits exactly on the items the routing fixes address: the region counts are taken in *processed*
+pixels, so at 2× the density falls below the thresholds — tdev_0000/0024/0039/0045 leave the coarse noise branch
+(+0.07…+0.10, same as `noise_density`), tdev_0012/0051/0048 stay in the region engine (+0.14/+0.11/+0.05, same as
+`graphic_override`), and tdev_0003 is wrongly kept in the region engine (−0.101). Region-engine items proper:
+tdev_0021 +0.026, tdev_0033 −0.002. With the routing fixed (cand3/cand4 +0.035/+0.036 in fast mode) there is no
+tdev argument for 2× on flat presets; decision unchanged (2× only for line_art/diagram).

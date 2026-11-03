@@ -3,8 +3,10 @@
 Branch `phase2/C` (from `phase2-base`). Details and every experiment: EXPERIMENTS.md "Phase 2 — stream C",
 alternatives: RESEARCH.md "Phase 2 — stream C".
 
-## What changed (all behind option keys; DEFAULTS still reproduce phase2-base unless noted)
-| key (vectorizer/api.py DEFAULTS) | old behaviour | recommended | what it does |
+## What changed (all behind option keys; the recommended values are now the DEFAULTS)
+Reproduce phase2-base behaviour: `fringe="none", photo_route="features", noise_density=0.1, graphic_override=False,
+fit_profile="default", max_presets=["icon","logo","flat_illustration","line_art","diagram"]`.
+| key (vectorizer/api.py DEFAULTS) | phase2-base | new default | what it does |
 |---|---|---|---|
 | `fringe` | None | `"auto"` | edge-fringe clean-up after quantisation (new `vectorizer/pipeline/fringe.py`, halo model); "auto" = only icon/logo/flat_illustration presets (it erases strokes in line art) |
 | `fringe_near` | 0.09 | 0.09 | OKLab distance for "overshoot band of its neighbour" |
@@ -12,13 +14,28 @@ alternatives: RESEARCH.md "Phase 2 — stream C".
 | `noise_density` | 0.1 | `0.35` | fallback "pure noise" branch (coarse VTracer) threshold, regions/px counted before clean-up |
 | `graphic_override` | False | `True` | strong-edge graphic art (classifier flat ≥ 0.2, ink_edge ≥ 0.4) keeps the region engine; only noise bails |
 | `fit_profile` | "default" | `"tight"` | fit_tol 0.3 / line_tol 0.33 at 1× for graph-engine content presets (not cut, not 2× max) |
-| `max_presets` | None (= icon, logo, flat_illustration, line_art, diagram) | `["line_art","diagram"]` with tight | presets that mode="max" processes at 2× |
+| `max_presets` / `MAX_MODE_PRESETS` | icon, logo, flat_illustration, line_art, diagram | line_art, diagram | presets that mode="max" processes at 2× |
 | `photo_fallback` | (implicit: auto only) | None | force the region-explosion fallback on/off for explicit presets (evaluation tool) |
 Config with the recommended values: `eval/configs/C_final.yaml` (dev) / `C_tfinal.yaml` (tdev, LPIPS + print/cut).
 `eval/run.py`: per-item `st_preset`, `st_fallback`, `st_engine`, `st_n_regions`, `st_upscale` are now stored.
 
-## Numbers
-(see bottom section "Full runs" — filled in from the full runs)
+## Numbers vs phase2-base (full runs; C_base / C_tbase = unchanged phase2-base, C_final / C_tfinal = new defaults)
+### dev (130 items) — composite, Δ; tolerances: all categories pass (composite/SSIM up, ΔE down, edgeF ≥ −0.002, gap 0, valid 100 %)
+| cat | composite | SSIM | PSNR | ΔE | edgeF | edge_dev | corner rec. | prim. | nodes | gz bytes |
+|---|---|---|---|---|---|---|---|---|---|---|
+| ALL | 0.9044 → **0.912 (+0.008)** | +0.004 | +1.55 dB | −0.072 | +0.000 | −0.032 | −0.012 | −0.005 | +1 % | −3 % |
+| icon | 0.9495 → 0.960 (+0.011) | +0.003 | +2.48 | −0.044 | +0.001 | −0.029 | | | +25 % | +15 % |
+| logo | 0.9231 → 0.937 (+0.014) | +0.008 | +1.32 | −0.141 | +0.001 | −0.062 | | | −48 % | −67 % |
+| flat_illustration | 0.9526 → 0.956 (+0.004) | +0.003 | +1.63 | −0.047 | −0.002 | −0.029 | +0.010 | ±0 | +54 % | +43 % |
+| line_art | 0.8991 → 0.910 (+0.011) | +0.005 | +1.99 | −0.110 | +0.001 | −0.022 | | | +32 % | +32 % |
+| diagram | 0.8942 → 0.902 (+0.008) | +0.004 | +1.49 | −0.075 | +0.001 | −0.018 | −0.020 | −0.007 | +16 % | +19 % |
+| gradient | 0.8813 → 0.886 (+0.005) | +0.003 | +1.18 | −0.053 | +0.000 | −0.034 | ±0 | | +21 % | −23 % |
+| photo | 0.7575 → 0.758 (±0) | ±0 | ±0 | ±0 | ±0 | | | | ±0 | ±0 |
+(logo / gradient bytes drop: dev_0029 and dev_0069 leave the photo engine.) Corner recall −0.012 (diagram −0.020) is the
+one geometric metric that moves the wrong way (tight fitting splits some corner arms) — not in the tolerance list,
+flagged for the lead.
+### tdev
+(see "tdev full run" below)
 
 ## Decisions
 - **Classifier (item 5)**: measured cost of the classifier on dev = 0.0012 composite vs the per-image oracle over the four
