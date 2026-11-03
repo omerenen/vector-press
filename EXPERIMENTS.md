@@ -194,3 +194,9 @@ tuned baseline 0.838), ΔE −0.11. Overall **0.904** → best-v3.
 | best-v1 | e07f24d | 0.895 | graph engine + presets + gradients + denoise (exp_010) |
 | best-v2 | 48e89b6 | 0.901 | + sub-pixel boundaries (exp_011) |
 | best-v3 | e0fe785 | 0.904 | + speedups, photo preset, gradient robustness (exp_015) |
+
+## Fresh-clone test (2026-11-03)
+`git clone --branch claude/laughing-rubin-n46tic https://github.com/omerenen/vector-press.git` into an empty directory →
+`python3.12 -m venv .venv` → `pip install -r requirements.txt` → `python -m pytest -q`: **42 passed** →
+`python -m vectorizer demo.png -o demo.svg` OK → `pip install -e .` → `vectorize demo.png -o demo2.svg --preset logo --mode max` OK
+(output: exact `<rect>` + `<circle>`). Nothing depends on files outside the repository (datasets are rebuilt by `python -m data.build`).
