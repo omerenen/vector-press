@@ -1,0 +1,4 @@
+name: exp_000_baseline
+description: Plain VTracer 0.6.15, default parameters (color, stacked, spline).
+method: vtracer
+params: {}
