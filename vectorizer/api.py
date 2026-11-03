@@ -31,6 +31,7 @@ DEFAULTS = dict(
     seam_width=1.0,
     line_tls=0.45,           # straight-line test tolerance on TLS fit (px)
     thin_lines="ridge",      # "ridge": rescue sub-pixel lines; "both": + bridge diagonal saddles (off: +33% bytes)
+    denoise=1,               # edge-preserving sigma-filter iterations before quantisation (W1)
     gradients=True,          # fit linear/radial gradients to banded colour ramps (W6)
     grad_tol=0.03,           # max OKLab RMS residual for an accepted gradient
     slivers=True,
@@ -80,7 +81,8 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
         lbl, pal_rgb, pal_lab, qinfo = quantize(rgba[..., :3], rgba[..., 3], radius=opts["color_radius"],
                                                 max_colors=opts["max_colors"], min_area=opts["min_area"],
                                                 thin_lines=opts["thin_lines"], mix_suppress=opts["mix_suppress"],
-                                                slivers=opts["slivers"], merge_frac=opts["merge_frac"])
+                                                slivers=opts["slivers"], merge_frac=opts["merge_frac"],
+                                                denoise=opts["denoise"])
         timings["quantize"] = time.perf_counter() - t
         stats.update(qinfo)
         if opts["engine"] == "vtracer":

@@ -3001,5 +3001,155 @@
     "gz_bytes": 72672.3
    }
   }
+ },
+ "color_precision=7,corner_threshold=30,filter_speckle=8,layer_difference=32,length_threshold=4.0": {
+  "params": {
+   "filter_speckle": 8,
+   "color_precision": 7,
+   "layer_difference": 32,
+   "corner_threshold": 30,
+   "length_threshold": 4.0
+  },
+  "summary": {
+   "ALL": {
+    "composite": 0.7965207764774525,
+    "ssim": 0.9280592612830891,
+    "de_mean": 2.485615031976465,
+    "edge_f": 0.8860033084425567,
+    "n_paths": 41.676923076923075,
+    "gz_bytes": 18001.0
+   },
+   "icon": {
+    "composite": 0.822861237362042,
+    "ssim": 0.954750973336109,
+    "de_mean": 1.7349206748190862,
+    "edge_f": 0.9093730496377619,
+    "n_paths": 23.25,
+    "gz_bytes": 11786.1
+   },
+   "logo": {
+    "composite": 0.8330665778393188,
+    "ssim": 0.9466980467471078,
+    "de_mean": 1.7539824980180612,
+    "edge_f": 0.9589941007470847,
+    "n_paths": 17.85,
+    "gz_bytes": 9109.85
+   },
+   "flat_illustration": {
+    "composite": 0.851280309485668,
+    "ssim": 0.9577795417487753,
+    "de_mean": 0.9623770401117755,
+    "edge_f": 0.9434015605698356,
+    "n_paths": 19.35,
+    "gz_bytes": 10087.55
+   },
+   "line_art": {
+    "composite": 0.8097330326729454,
+    "ssim": 0.9489324251963422,
+    "de_mean": 2.5779913859353814,
+    "edge_f": 0.950366059945351,
+    "n_paths": 35.05,
+    "gz_bytes": 17255.7
+   },
+   "diagram": {
+    "composite": 0.7812284238804681,
+    "ssim": 0.9388985730703509,
+    "de_mean": 2.1033271237393043,
+    "edge_f": 0.9045555574400816,
+    "n_paths": 52.8,
+    "gz_bytes": 18288.2
+   },
+   "gradient": {
+    "composite": 0.7583402097104877,
+    "ssim": 0.9284014083702041,
+    "de_mean": 4.925875321352405,
+    "edge_f": 0.7538382256864244,
+    "n_paths": 33.2,
+    "gz_bytes": 13919.5
+   },
+   "photo": {
+    "composite": 0.6417505123050228,
+    "ssim": 0.7138484597423782,
+    "de_mean": 4.196047327742023,
+    "edge_f": 0.6769859017001585,
+    "n_paths": 178.8,
+    "gz_bytes": 73119.2
+   }
+  }
+ },
+ "color_precision=7,corner_threshold=60,filter_speckle=8,layer_difference=32,length_threshold=4.0": {
+  "params": {
+   "filter_speckle": 8,
+   "color_precision": 7,
+   "layer_difference": 32,
+   "corner_threshold": 60,
+   "length_threshold": 4.0
+  },
+  "summary": {
+   "ALL": {
+    "composite": 0.7961907278400528,
+    "ssim": 0.9282110673401914,
+    "de_mean": 2.459480798713831,
+    "edge_f": 0.8924781031630055,
+    "n_paths": 41.676923076923075,
+    "gz_bytes": 22526.546153846153
+   },
+   "icon": {
+    "composite": 0.8268812364593744,
+    "ssim": 0.9559123004271595,
+    "de_mean": 1.6779732972277341,
+    "edge_f": 0.9199047798790521,
+    "n_paths": 23.25,
+    "gz_bytes": 13298.15
+   },
+   "logo": {
+    "composite": 0.8340615135910803,
+    "ssim": 0.9473304904168623,
+    "de_mean": 1.7161587318558582,
+    "edge_f": 0.9656272187517564,
+    "n_paths": 17.85,
+    "gz_bytes": 11614.65
+   },
+   "flat_illustration": {
+    "composite": 0.8510171590430223,
+    "ssim": 0.9566521912474473,
+    "de_mean": 0.9354699870305831,
+    "edge_f": 0.9502162522563518,
+    "n_paths": 19.35,
+    "gz_bytes": 12799.85
+   },
+   "line_art": {
+    "composite": 0.8084293479419667,
+    "ssim": 0.9484964182789988,
+    "de_mean": 2.5663686544781266,
+    "edge_f": 0.9596539804923523,
+    "n_paths": 35.05,
+    "gz_bytes": 20516.1
+   },
+   "diagram": {
+    "composite": 0.7791549937558544,
+    "ssim": 0.9396299325932345,
+    "de_mean": 2.0826637955027305,
+    "edge_f": 0.9135184021116792,
+    "n_paths": 52.8,
+    "gz_bytes": 28089.8
+   },
+   "gradient": {
+    "composite": 0.7561804312412168,
+    "ssim": 0.9287293910417878,
+    "de_mean": 4.907218375135744,
+    "edge_f": 0.7537669714716493,
+    "n_paths": 33.2,
+    "gz_bytes": 16470.1
+   },
+   "photo": {
+    "composite": 0.6390300978556577,
+    "ssim": 0.7132424274115101,
+    "de_mean": 4.201544700818253,
+    "edge_f": 0.6768401311933896,
+    "n_paths": 178.8,
+    "gz_bytes": 87267.8
+   }
+  }
  }
 }

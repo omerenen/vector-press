@@ -107,3 +107,26 @@ but gradient −0.005, photo −0.012 → **preset-dependent** → motivates the
 - Three parameters (mix_suppress, merge_frac, slivers on photos) split flat vs continuous-tone content the same way →
   next: heuristic classifier + presets, then gradient fitting (W6) and a photo/posterize path.
 - Not in a local optimum yet: every recent structural change gave measurable gains; parameter tweaks were small.
+
+## exp_008_gradients — W6 gradient detection & fitting
+Soft boundaries between quantisation bands are detected by comparing the input change over a 5-px span across the
+boundary with the palette step (a first version comparing only the two adjacent pixels mistook anti-aliased/blurred
+real edges for soft ones and chained unrelated shapes into one group; its fits were worse than the bands).
+Regions joined by soft boundaries get one linear or radial gradient (principal direction / quadratic-luminance centre,
+multi-stop profile simplified by Douglas–Peucker), accepted only if OKLab RMS ≤ 0.03 and < 0.85× the banded error.
+Result: gradient category 0.853→**0.864** (SSIM +0.008, PSNR +0.85, ΔE −0.23, edgeF +0.024); all flat categories
+unchanged (no false gradients). e.g. dev_0071 SSIM 0.950→0.985. **Keep.**
+
+## exp_009_auto — heuristic classifier + presets (W7)
+Features on a ≤256 px median-filtered thumbnail (colour-histogram coverage c90/c99, top-bin share, flat / smooth / edge
+pixel fractions, chroma, "ink" share and ink-edge share). A depth-3 decision tree (5-fold CV acc. 0.82 on 4 preset
+families) was fitted on dev and hard-coded as rules (no runtime sklearn). Presets: flat → merge_frac 1.0;
+lines (line_art/diagram) → merge 1.0 + mixture suppression, no gradients; gradient/photo → merge 0.6.
+Result: composite 0.885→**0.889**; oracle presets (true category) give 0.890 → classifier errors cost 0.001.
+Dev confusion: diagrams → line_art (same preset family behaviour), some gradients → logo.
+
+## exp_010 (abl_009_denoise1) — W1 edge-preserving sigma filter
+Lee sigma filter in OKLab (3×3, threshold max(0.03, 4σ_noise)) before palette extraction / assignment.
+1 iteration: composite **0.895 (+0.006)**, PSNR +0.54, ΔE −0.044, edgeF +0.007, edge_dev −0.019, gz −13 %;
+every category improves (gradient +0.015, logo +0.007). 2 iterations: same overall, diagram slightly worse, slower.
+**Keep, denoise=1 default.**

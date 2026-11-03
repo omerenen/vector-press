@@ -456,12 +456,15 @@ def merge_small_regions(lbl, pal, min_area, passes=3, connectivity=4):
 
 
 def quantize(rgb, alpha, radius=0.045, max_colors=64, min_area=None, window=2, alpha_threshold=128,
-             thin_lines=True, mix_suppress=True, slivers=True, merge_frac=0.6):
+             thin_lines=True, mix_suppress=True, slivers=True, merge_frac=0.6, denoise=0):
     """Return (labels HxW int32 with -1 transparent, palette_rgb (K,3) float, palette_lab, info dict)."""
     H, W, _ = rgb.shape
     lab = rgb8_to_oklab(rgb)
     valid = alpha >= alpha_threshold
     noise = estimate_noise(lab)
+    if denoise:
+        from .preprocess import sigma_filter
+        lab = sigma_filter(lab, t=max(0.03, 4 * noise), iters=int(denoise))
     stats = _dir_stats(lab)
     pal, flat = extract_palette(lab, valid, radius=radius, max_colors=max_colors, noise=noise, mix_suppress=mix_suppress,
                                 merge_frac=merge_frac, stats=stats)
