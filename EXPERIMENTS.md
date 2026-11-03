@@ -445,3 +445,134 @@ within tolerance). Overfitting check passed: the gain is as large as on dev. Fla
 single image (proc2_0012: one 8 000-px background loop whose ordinary chain still crossed an exact primitive edge after
 the polyline repair → emitted as `make_valid` parts with flattened curves, 1 126 → 5 304 nodes). After the run the valid
 parts are thinned (DP 0.15 px, re-validated on the output grid): 5 304 → 3 675 nodes on that image (not re-run on all of proc2).
+## Phase 2 — stream B
+
+### B-0 Diagnosis (before code changes): why the region engine explodes on tdev
+Measured stage by stage on the worst tdev images (`quantize` internals, label maps and renders viewed side by side with
+the input and VTracer):
+1. **Early bail-out counts fragments, not regions.** `quantize(bail_density=4×0.008)` counts 4-connected components of
+   the *raw* nearest-palette assignment, before any clean-up. DALL-E output carries generator noise / paper grain /
+   halftone dots, so this raw map is salt-and-pepper: tdev_0051 (clean cartoon sticker) has 39 119 raw components but only
+   815 regions after the phase-1 clean-up → it is routed to VTracer anyway (11 184 paths, 1.06 MB, visibly worse).
+   tdev_0000 (stencil with halftones) has 303 k raw components (> 0.1·HW) → VTracer with the "pure noise" parameters
+   (1 256 blobby paths, composite 0.481 vs VTracer default 0.607).
+2. **The fixed-area speckle merge cannot converge in texture.** `merge_small_regions` moves each component smaller than
+   `min_area` into the most similar neighbouring *label*; inside texture all neighbours are fragments too, so fragments
+   merge into fragments and stay small. tdev_0003: 71 903 components → 38 431 / 27 132 / 22 802 after passes 1/2/3,
+   19 109 after 7 passes; median region area stays 2–3 px (min_area 42). Sliver removal then halves it (10 112) but the
+   result is still far above the fallback threshold (11 521 regions, 4.5 MB through VTracer).
+3. **Palette quantisation with a fixed OKLab radius (0.045, ≤64 colours) is the wrong primitive for shaded art.** Region
+   colours are palette colours, so soft shading needs either many palette colours (→ more fragments) or posterises.
+4. **Thin bright features are lost** where the region engine does run (tdev_0039 hair strands, tdev_0000 bow string):
+   speckle merge / sliver removal treat 1–3 px strands as noise (edge-F 0.699 vs VTracer 0.929).
+Consequence: 37/53 images go to VTracer (photo parameters, ≤1024 px) and ~8 images that stay in the region engine are
+worse than VTracer default (0000, 0017, 0020, 0024, 0039, 0045, 0048, 0049).
+Root cause in one sentence: the clean-up stage decides by *area* only (fixed speckle size), so it has no notion of how
+much a merge costs in colour error versus how much boundary (= SVG bytes) it saves.
+
+### B-1 Alternatives for the segmentation stage (raster-level screening, then full pipeline)
+Screening metric (cheap, same for every segmenter): render every region with its mean colour, compute the composite's
+fidelity part (SSIM/PSNR/ΔE/edge-F/GMSD vs the input) and the total boundary length (crack edges = the SVG's cost driver).
+tdev_0051 / 0003 / 0040 / 0039 / 0012 / 0024, at several detail levels each (`/tmp` script, numbers in RESEARCH.md):
+- current palette + fixed-area merge: 0040 135 k boundary px → fid 0.811; 0051 66.6 k → 0.873.
+- **Mumford–Shah region merging (RAG, colour + boundary length) on the palette over-segmentation**: 0040 141 k → 0.839,
+  0051 64.5 k → 0.876 (better at equal or lower boundary length on every image; scale-aware).
+- Felzenszwalb (graph-based) alone: far worse at equal boundary length (0051: 152 k → 0.819; leaks + fragments).
+- Felzenszwalb fine over-segmentation + MS merging: same curve as MS, slightly better at high detail on 3/6 images
+  (0040 131 k → 0.857), worse on 0024 → kept as option `seg_init="fz"` for the pipeline test.
+- SLIC + mean colours: much worse (0051 6 800 regions → 0.751). L0 gradient smoothing (Xu et al. 2011) + palette:
+  no better than MS and 25 s per image → rejected.
+MS merge cost on 1 MP: 0.3–1 s (vectorised rounds, 10–16 rounds).
+
+### B-2 `segment="ms"` in the pipeline (tdev_small, t_final settings, 18 images)
+| run | composite | SSIM | PSNR | ΔE | edge-F | GMSD | LPIPS | paths (med) | gz (med) |
+|---|---|---|---|---|---|---|---|---|---|
+| phase2-base (t_final) | 0.689 | 0.788 | 24.2 | 3.60 | 0.864 | 0.125 | 0.182 | 7 735 | 1 559 KB |
+| VTracer default | 0.678 | 0.779 | 22.4 | 4.15 | 0.893 | 0.121 | 0.184 | 10 641 | 2 361 KB |
+| ms λ=0.01 | **0.723** | **0.821** | **25.1** | **3.18** | **0.896** | **0.105** | **0.162** | 12 636 | 1 645 KB |
+| ms λ=0.03 | 0.705 | 0.808 | 25.1 | 3.31 | 0.856 | 0.127 | 0.168 | 6 458 | 570 KB |
+The early bail-out now uses a pure-noise test (>0.25 raw components per px); the density fallback in api.py is unchanged
+but sees the MS region count. Per image: clean cartoon / logo art wins big (0051 0.734→0.824 at 62 KB instead of
+1 064 KB, 0012 0.575→0.716, 0042 0.863→0.886); heavy-texture images (0003 fur, 0045/0048 painterly) are better on the
+composite with the VTracer fallback (0003: MS 0.589 / 615 KB vs VTracer 0.720 / 4.5 MB) - the metric rewards
+reproducing texture; λ=0.01 routes more of them to the fallback than λ=0.03, hence its higher score.
+Dev (phase-1, 44 images): ms λ=0.01 regresses line_art (−0.016: thin AA lines took their diluted region mean colour,
+6→74 paths because every region had its own paint) and photo (dev_0123 no longer falls back) → fix B-3.
+
+### B-3 Making `ms` safe on phase-1 art (dev_small, 44 images) + routing
+- `ms` alone keeps high-contrast AA/JPEG fragments along strokes as regions (they are "real" for a piecewise-constant
+  energy): dev_0081 (simple line drawing) 207 regions instead of 5, ragged edges, line_art −0.016.
+- Fixes: (1) `seg_premerge`: run the phase-1 speckle merge + sliver removal on the palette over-segmentation first, MS
+  then merges what the area rule cannot (texture fragments surrounded by fragments); (2) region colours: regions within
+  0.02 OKLab of their majority palette colour share that palette label (one paint, one path per colour as before);
+  thin regions without flat pixels take the pure palette colour; final colours = per-label median of flat pixels
+  (phase-1 rule).
+| dev_small | composite | diagram | flat | gradient | icon | line_art | logo | photo |
+|---|---|---|---|---|---|---|---|---|
+| base (speed-refactored, identical to phase2-base 0.9061) | 0.9061 | 0.8876 | 0.9617 | 0.8724 | 0.9553 | 0.9126 | 0.9351 | 0.7609 |
+| ms λ0.01 | 0.9006 | 0.8834 | 0.9621 | 0.8733 | 0.9550 | 0.8968 | 0.9344 | 0.7337 |
+| ms + premerge + snap + medians | 0.9036 | 0.8883 | 0.9619 | 0.8742 | 0.9553 | 0.9135 | 0.9359 | 0.7261 |
+All non-photo categories within tolerance (gradient edge-F −0.004, ΔE ±0.01); photo −0.035 = one image (dev_0123)
+no longer routed to the photo engine because MS produces far fewer regions than the palette stage.
+- tdev_small with premerge: 0.7179 (paths median 8 518, 1.16 MB) vs 0.7229 without; region densities after MS drop
+  (0039 14→6.7, 0003 5.2→3.5 per 1000 px) so the unchanged density threshold (8/1000) sends 0039/0048 to the region engine.
+  Per image, region output beats the VTracer photo engine up to 2.5 regions/1000 px (0012) and loses from 3.5 (0003 fur:
+  0.566 vs 0.720; 0048: 0.598 vs 0.673) → `seg_max_density` (density threshold used when segment="ms"), simulated 0.003:
+  0.7293 on tdev_small.
+
+### B-4 Routing with the ms engine (preset auto)
+Region density after MS is a poor texture detector (MS merges smooth photos into few regions: dev_0123 photo 403 regions
+→ region output 0.656 vs VTracer 0.765; tdev_0003 fur 3.5/1000 px). Measured per image on tdev_small + dev_small:
+the phase-1 post-clean-up count (`merge_small_regions`+slivers, computed anyway by `seg_premerge`) and the raw palette
+fragment count separate the cases: region output wins for 0051 (raw 48 / p1 0.9 per 1000 px), 0012 (51 / 6.7), 0021,
+0033, 0042, 0006; the photo engine wins for 0003 (69 / 11.3), 0048 (107 / 15.6), dev_0123 (69 / 4.4), 0039/0045/0024/0000
+(>130 / >26). Rule (auto only): photo engine if p1 > `max_region_density` (0.008, unchanged) or raw > `seg_raw_bail`
+(0.06; phase 1 bailed at 0.032 raw, which sent 0051/0012 to VTracer). Thresholds rest on few images → lead/stream C
+should re-check them on the full set (HANDOFF).
+| run (tdev_small) | composite | SSIM | ΔE | edge-F | LPIPS |
+|---|---|---|---|---|---|
+| phase2-base | 0.689 | 0.788 | 3.60 | 0.864 | 0.182 |
+| ms + premerge, density 0.008 | 0.718 | 0.819 | 3.23 | 0.884 | 0.163 |
+| **ms + premerge + routing (default now)** | **0.729** | **0.829** | **3.13** | **0.904** | **0.157** |
+dev_small with the defaults: 0.9067 vs 0.9061; every category ≥ base (photo identical, gradient edge-F −0.004, ΔE ±0.01).
+
+### B-5 Gradients (work item 6): piecewise-affine MS + per-region linear gradients (`seg_model="affine"`)
+Root cause on the dev gradient category (dev_0068 edge-F 0.41, dev_0061, dev_0066, Fluent-emoji style art): soft
+shading and *blurred* features are cut into flat bands; every band border is a hard edge that the input does not have
+(Canny precision drops), and smooth ramps inside one object are not linear/radial over the whole soft group, so the
+soft-group fitter (phase 1) rejects them. Approach: MS with an affine colour model per region (ridge-regularised
+slopes, batched 3×3 solves), then every region whose affine fit removes more squared error than the price of ~60 px of
+boundary gets a `linearGradient` along its dominant colour-change direction (2–3 stops, sRGB interpolation corrected
+by a mid stop when needed); the phase-1 soft-group gradients still run first.
+- Raster screening tdev_0030 (poster with bokeh): fid 0.739 → 0.760 at −18 % boundary; pipeline: −22 % bytes, GMSD
+  0.112 → 0.094, contour banding gone (visual).
+- dev_small: gradient edge-F 0.8638 → **0.8754** (+0.012), but PSNR −0.9 dB / ΔE +0.07 on gradient and ΔE +0.07 on
+  logo (AA rings give flat regions a small slope), composite gradient 0.8734 vs 0.8742 (const) → mixed.
+- tdev_small (region-engine images only): +0.002..+0.004 on 0012/0033/0042, −0.005 on 0003; affine also changes region
+  counts (routing) and costs ~0.3 s/MP (moment accumulation) → **kept as an option, default "const"**.
+Soft (blurred) boundaries themselves would need blur filters or mesh gradients (resvg: no mesh) – open problem.
+
+### B-6 Speed of quantize (work item 7), cProfile ratios on the same machine/run (12 dev items rendered at 1024 px)
+Changes with identical output (verified: label maps equal on 30 dev runs except float-rounding flips in ≤0.1 % px of
+2 images; dev_small composite 0.9061 = phase2-base): symmetric sigma filter (4 instead of 8 neighbour distances, channel
+planes – 3× faster), `_dir_stats` from one neighbour-distance plane per direction (2.4×), dense-histogram palette binning
+instead of `np.unique` sort, one-sort per-label medians instead of K full-image masks, uint8 OKLab LUT, low-alpha pass
+skipped on opaque input, MS region stats on channel planes. Same 8 images, same process: quantize 12.5 s → 6.5 s
+(−48 %); share of quantize in the whole pipeline 0.511 → 0.385 (palette engine). The default ms engine (premerge + MS)
+costs +12 % over that on flat art (quantize/fit ratio 0.80 → 0.98, base 1.36): estimated median ≈ 1.6–1.7 s at 1024 px
+from the phase-1 stage medians (quantize 1.18→~0.85 s, fit unchanged 0.6 s) → the ≤1.2 s target needs fit-stage work
+(stream A) too; real timing by the lead.
+
+### B-7 Full runs (defaults: segment="ms", seg_premerge, routing B-4; code = commit d7f1949, `vectorizer/` unchanged
+since) vs phase2-base re-run (`B_base_*`)
+- tdev t_final (53): composite **0.702 → 0.724** (VTracer default 0.680), SSIM 0.796 → 0.818, ΔE 3.35 → 3.07,
+  edge-F 0.865 → 0.882, LPIPS 0.185 → 0.169; every category ≥ base (cutfile +0.028, logo +0.021, poster +0.020,
+  sticker +0.032, tshirt =, vector_flat +0.019 with median paths 11 222 → 3 334 and 1.32 MB → 393 KB); 22 images
+  better, 3 worse (0040 −0.034, 0013 −0.008, 0007 −0.006).
+- dev (130): **0.9044 → 0.9050**, all categories within tolerance, valid 100 %, gap 0 (per-category table in HANDOFF_B.md).
+- tdev t_cut (53): composite 0.326 → 0.331; tiny islands 2.25 → 1.42, thin features 48.2 → 40.2, thin area
+  81.7 → 69.1 mm², self-intersections 42.3 → 37.3, gz 81.7 → 68.1 KB (median), nodes 8 223 → 6 962; ΔE +0.5.
+Honest limitation: 35/53 tdev outputs are still VTracer-like (photo engine) because on heavy texture the composite
+prefers the 30 k-path stack; the clean region output for those images exists (print/cut intents, `seg_budget`) but
+scores lower (tdev_small print: 0.654 vs 0.671 for the old run with fallbacks; 368 KB vs 1.2 MB, 1 176 vs 7 485 paints,
+3 272 vs 8 262 tiny islands, overlap 0.10 vs 3.05).

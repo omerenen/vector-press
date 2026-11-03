@@ -123,3 +123,34 @@ crossings near junctions. Alternatives: constrained Bézier fitting (control poi
 needs a QP per segment), crossing detection + local refit (chosen: polylines through the sub-pixel samples, then raw
 crack midpoints, whose ring is simple by construction), clipping the output with a polygon boolean library (shapely
 `make_valid`/buffer(0): changes topology and breaks shared borders). Pinch vertices are split into separate rings.
+## Phase 2 — stream B
+
+Problem: textured AI art (DALL-E 3: generator noise, paper grain, halftones, painterly shading) makes the palette +
+fixed-area speckle-merge stage explode (diagnosis in EXPERIMENTS.md B-0). Alternatives considered for the segmentation
+stage (screened on the raster level = mean-colour render vs input at equal boundary length, then full pipeline):
+- **Piecewise-constant Mumford–Shah / Potts region merging on the region-adjacency graph** (Koepfler, Lopez & Morel,
+  "A multiscale algorithm for image segmentation by variational method", SIAM J. Numer. Anal. 1994; Mumford & Shah 1989).
+  Own vectorised implementation (numpy, parallel "nearest-neighbour stars" per round instead of a priority queue).
+  Merge cost = colour SSE increase vs λ·shared boundary → scale aware, boundary length is also the SVG cost driver.
+  Decision: **implemented** (`pipeline/segment.py`, `segment="ms"`); best rate–distortion on the screening set.
+- **Piecewise-affine Mumford–Shah** (same energy with an affine colour model per region, ridge-regularised slopes): smooth
+  shading is no longer cut into contour bands; each region with a significant slope becomes a `linearGradient` if the
+  SSE reduction pays for ~60 px of boundary. Raster screening tdev_0030: fid 0.739→0.760 at −18 % boundary length.
+  Decision: **implemented** (`seg_model="affine"`, `gradients.affine_fills`).
+- **Felzenszwalb–Huttenlocher graph segmentation** (IJCV 2004, scikit-image BSD-3): alone it leaks/fragments (worse
+  rate–distortion than the current stage); as a fine over-segmentation before MS merging it is on par with the palette
+  over-segmentation (better at high detail on 3/6 screening images). Kept as option `seg_init="fz"`.
+- **SLIC superpixels** (Achanta et al. 2012, scikit-image): compact-shape prior fights thin structures; clearly worse.
+  Rejected.
+- **L0 gradient minimisation** (Xu, Lu, Xu & Jia, SIGGRAPH Asia 2011) as edge-preserving pre-smoothing for the palette
+  stage: no better than MS and ~25 s/MP with FFT solves. Rejected.
+- **Learned edge detectors (TEED / DexiNed class, MIT licensed)** to modulate the boundary price: the MS energy already
+  separates real edges from texture on the screening set; a learned edge map would need ~1 s/MP extra on CPU and the
+  remaining loss on heavy texture comes from the metric rewarding texture reproduction (VTracer stacks 30 k paths), not
+  from misplaced boundaries. Not pursued (no data-driven reason); `ms_merge(edge_weight=...)` is the hook for it.
+- **Routing between region engine and photo engine**: region density after MS (rejected: MS merges smooth photos into
+  few regions), residual texture energy / boundary length (rejected: no separation on tdev_small), phase-1 post-clean-up
+  count + raw fragment count (kept, B-4). A per-image rate–distortion estimate of both engines would be principled but
+  needs a VTracer run + render per image (2–4 s) → not done.
+- Winner: MS (const) + phase-1 pre-clean-up + palette snapping as the default segmentation (tdev 0.702 → 0.724, dev
+  0.9044 → 0.9050, full runs); piecewise-affine and Felzenszwalb initialisation stay options (mixed results, B-5).

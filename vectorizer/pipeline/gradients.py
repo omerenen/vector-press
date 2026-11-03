@@ -204,6 +204,75 @@ def gradient_defs(gid, kind, params, stops, prec=2):
             f'r="{fmt(R, prec)}">{st}</radialGradient>')
 
 
+def affine_fills(lab, lbl, pal_lab, exclude, lam, cost, prec=2, gid0=0, max_t=None):
+    """Per-region linear gradients from a piecewise-affine colour model (segment="ms", seg_model="affine").
+
+    For every label k (one region per label in the ms engine) the ridge-regularised affine OKLab fit is computed from
+    pixel moments; if it lowers the squared error by more than cost*lam (the price of ~cost px of boundary, i.e. the
+    bytes of a gradient definition) the region is filled with a linearGradient along its dominant colour-change
+    direction, spanning the region's extent. Returns ({label: (fill_attr, seam_paint)}, defs)."""
+    from .segment import _affine_solve
+    H, W = lbl.shape
+    K = len(pal_lab)
+    ok = lbl.ravel() >= 0
+    if K == 0 or not ok.any():
+        return {}, []
+    r = lbl.ravel()[ok]
+    idx = np.nonzero(ok)[0]
+    yy, xx = np.divmod(idx, W)
+    x = (xx + 0.5) / 1024.0
+    y = (yy + 0.5) / 1024.0
+    c = lab.reshape(-1, 3)[ok].astype(np.float64)
+    cols = [np.ones_like(x), x, y, x * x, x * y, y * y] + [c[:, i] for i in range(3)] + \
+        [x * c[:, i] for i in range(3)] + [y * c[:, i] for i in range(3)] + [(c * c).sum(1)]
+    st = np.stack([np.bincount(r, weights=v, minlength=K) for v in cols], 1)
+    n = np.maximum(st[:, 0], 1e-12)
+    sse_c = st[:, 15] - (st[:, 6:9] ** 2).sum(1) / n
+    obj, X = _affine_solve(st)
+    gain = sse_c - obj
+    cand = np.nonzero((gain > cost * lam) & (st[:, 0] >= 16))[0]
+    cand = np.array([k for k in cand.tolist() if k not in exclude], np.int64)
+    if len(cand) == 0:
+        return {}, []
+    G = X[:, 1:3, :]                                        # (K, 2 [x, y], 3 channels): OKLab per 1024 px
+    # dominant direction: top right-singular... (2x3 -> principal 2-vector of G G^T)
+    M = np.einsum("kic,kjc->kij", G, G)
+    tr = M[:, 0, 0] + M[:, 1, 1]
+    det = M[:, 0, 0] * M[:, 1, 1] - M[:, 0, 1] ** 2
+    l1 = tr / 2 + np.sqrt(np.maximum(tr * tr / 4 - det, 0))
+    dx = np.where(np.abs(M[:, 0, 1]) > 1e-15, M[:, 0, 1], np.where(M[:, 0, 0] >= M[:, 1, 1], 1.0, 0.0))
+    dy = np.where(np.abs(M[:, 0, 1]) > 1e-15, l1 - M[:, 0, 0], np.where(M[:, 0, 0] >= M[:, 1, 1], 0.0, 1.0))
+    nn = np.sqrt(dx * dx + dy * dy) + 1e-30
+    dx, dy = dx / nn, dy / nn
+    # extent of each region along its direction (px)
+    proj = (xx + 0.5) * dx[r] + (yy + 0.5) * dy[r]
+    smin = np.full(K, np.inf)
+    smax = np.full(K, -np.inf)
+    np.minimum.at(smin, r, proj)
+    np.maximum.at(smax, r, proj)
+    mx, my = st[:, 1] / n * 1024.0, st[:, 2] / n * 1024.0            # centroid (px)
+    fills, defs = {}, []
+    from .svgout import fmt
+    for k in cand.tolist():
+        s0, s1 = smin[k], smax[k]
+        if not np.isfinite(s0) or s1 - s0 < 2:
+            continue
+        mc = mx[k] * dx[k] + my[k] * dy[k]
+        p0 = np.array([mx[k] + (s0 - mc) * dx[k], my[k] + (s0 - mc) * dy[k]])
+        p1 = np.array([mx[k] + (s1 - mc) * dx[k], my[k] + (s1 - mc) * dy[k]])
+        ts = np.linspace(0.0, 1.0, 3)
+        pts = p0[None] + ts[:, None] * (p1 - p0)[None]
+        labs = X[k, 0][None] + (pts[:, :1] / 1024.0) * X[k, 1][None] + (pts[:, 1:] / 1024.0) * X[k, 2][None]
+        rgbs = oklab_to_rgb8(labs.astype(np.float32))
+        # midpoint stop only if sRGB-linear interpolation of the ends misses the OKLab ramp
+        mid_err = np.abs(rgbs[1] - 0.5 * (rgbs[0] + rgbs[2])).max()
+        stops = [(0.0, rgbs[0]), (0.5, rgbs[1]), (1.0, rgbs[2])] if mid_err > 2.0 else [(0.0, rgbs[0]), (1.0, rgbs[2])]
+        gid = f"a{gid0 + len(defs) + 1}"
+        defs.append(gradient_defs(gid, "linear", (p0, p1), stops, prec))
+        fills[k] = (f'fill="url(#{gid})"', f"url(#{gid})")
+    return fills, defs
+
+
 def apply_gradients(rgb, lbl, pal_lab, opts):
     """Detect banded ramps and replace them by gradient-filled regions.
 
@@ -278,3 +347,16 @@ def apply_gradients(rgb, lbl, pal_lab, opts):
         lbl_new[mask] = newl
         fills[newl] = (f'fill="url(#{gid})"', f"url(#{gid})")
     return lbl_new, np.array(pal_new, np.float32), fills, defs
+
+
+def apply_gradients_ms(rgb, lbl, pal_lab, opts):
+    """segment="ms": soft-group gradients (banded ramps) first, then per-region affine gradients (seg_model="affine")."""
+    lbl, pal_lab, fills, defs = apply_gradients(rgb, lbl, pal_lab, opts)
+    if opts.get("seg_model") == "affine":
+        H, W = lbl.shape
+        lam = opts.get("seg_lambda", 0.01) * np.sqrt(H * W) / 1024.0
+        f2, d2 = affine_fills(rgb8_to_oklab(rgb), lbl, pal_lab, set(fills), lam, opts.get("seg_grad_cost", 60.0),
+                              int(opts.get("precision", 2)), gid0=0)
+        fills.update(f2)
+        defs = defs + d2
+    return lbl, pal_lab, fills, defs

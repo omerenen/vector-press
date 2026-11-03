@@ -9,7 +9,7 @@ import numpy as np
 from .imageio import ImageLike, load_rgba
 from .pipeline.assemble import build_elements
 from .pipeline.color import oklab_to_rgb8
-from .pipeline.gradients import apply_gradients
+from .pipeline.gradients import apply_gradients, apply_gradients_ms
 from .pipeline.quantize import quantize
 from .pipeline.svgout import svg_document
 from .pipeline.trace import vtracer_trace
@@ -66,6 +66,16 @@ DEFAULTS = dict(
     slivers=True,            # remove thin AA/JPEG bands whose colour mixes their neighbours
     merge_frac=0.6,          # palette colours closer than merge_frac*color_radius are merged
     mix_suppress=False,      # drop palette colours explainable as AA mixtures (line_art/diagram presets)
+    segment="ms",            # "ms": Mumford-Shah region merging of the palette over-segmentation | "palette" (phase 1)
+    seg_lambda=0.01,         # ms: boundary price (OKLab^2 per px of boundary at 1024 px); larger = fewer regions
+    seg_init="palette",      # ms: initial over-segmentation, "palette" components or "fz" (Felzenszwalb graph segmentation)
+    seg_model="const",       # ms: region colour model "const" | "affine" (piecewise-linear shading, linear-gradient fills)
+    seg_grad_cost=60.0,      # ms+affine: a region gets a gradient fill if it removes > seg_grad_cost*lam of squared error
+    seg_pal_snap=0.02,       # ms: regions within this OKLab distance of their majority palette colour use that colour
+    seg_premerge=True,       # ms: run the phase-1 speckle/sliver clean-up before the MS merge
+    seg_budget=0.004,        # ms without engine fallback (print/cut/explicit presets): max regions per px (raises lambda)
+    seg_raw_bail=0.06,       # ms + preset auto: > this many raw palette fragments per px -> photo engine (photographic texture)
+    seg_snap=0.0,            # ms: snap region colours closer than this (OKLab) to one paint (0 = off)
 )
 
 
@@ -225,7 +235,14 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
                                                 thin_lines=opts["thin_lines"], mix_suppress=opts["mix_suppress"],
                                                 slivers=opts["slivers"], merge_frac=opts["merge_frac"],
                                                 denoise=opts["denoise"], low_alpha=opts["low_alpha"],
-                                                bail_density=opts["max_region_density"] * 4 if auto else None)
+                                                bail_density=opts["max_region_density"] * 4 if auto else None,
+                                                segment=opts["segment"], seg_lambda=opts["seg_lambda"],
+                                                seg_snap=opts["seg_snap"],
+                                                seg_paints=opts["max_colors"] if opts["cutout"] else None,
+                                                seg_init=opts["seg_init"], seg_model=opts["seg_model"],
+                                                seg_pal_snap=opts["seg_pal_snap"], seg_premerge=opts["seg_premerge"],
+                                                seg_budget=None if auto else opts["seg_budget"],
+                                                seg_raw_bail=opts["seg_raw_bail"])
         timings["quantize"] = time.perf_counter() - t
         stats.update(qinfo)
         if opts["cutout"]:
@@ -250,7 +267,7 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
             popts = preset_options("photo")
             opts["engine"] = "vtracer_raw"
             opts["vtracer_params"] = dict(popts["vtracer_params"])
-            if qinfo["n_regions"] > 0.1 * H * W:      # pure noise: bound the output size
+            if qinfo.get("pure_noise", qinfo["n_regions"] > 0.1 * H * W):   # pure noise: bound the output size
                 opts["vtracer_params"].update(filter_speckle=8, color_precision=6, layer_difference=24)
             if max(H, W) > popts["max_side"]:
                 sc = popts["max_side"] / max(H, W)
@@ -261,7 +278,8 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
             label_fill, defs = None, []
             if opts["gradients"]:
                 t = time.perf_counter()
-                lbl, pal_lab, label_fill, defs = apply_gradients(rgba[..., :3], lbl, pal_lab, opts)
+                grad_fn = apply_gradients_ms if opts["segment"] == "ms" else apply_gradients
+                lbl, pal_lab, label_fill, defs = grad_fn(rgba[..., :3], lbl, pal_lab, opts)
                 pal_rgb = oklab_to_rgb8(pal_lab)
                 timings["gradients"] = time.perf_counter() - t
                 stats["n_gradients"] = len(defs)
