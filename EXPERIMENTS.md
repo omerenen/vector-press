@@ -282,3 +282,29 @@ explodes on DALL-E textures (painterly shading, generator noise, fine fake detai
 Our lead over VTracer on the target set is therefore small (0.702 vs 0.680) — the key target problem is a segmentation /
 palette stage that turns textured AI art into clean, compact, print/cut-ready regions (→ stream B). Cut preset: overlap
 ≈ 0 by construction, but still ~1 800 paths and ~300 KB for a cut file (same root cause).
+
+## Phase 2 — stream C (classifier / presets / fallback / regressions / fast-vs-max)
+
+### C-0 Setup
+`eval/run.py` now also stores `st_preset`, `st_fallback`, `st_engine`, `st_n_regions`, `st_upscale` per item (needed for the
+fallback / classifier analysis; no metric changed). New option `photo_fallback` (None = old behaviour: region-explosion
+fallback only with preset "auto"; True/False force it) so that explicit presets can be evaluated with and without the
+VTracer fallback.
+
+### C-8 Diagnosis of the two phase-1 held-out regressions (disclosure: the diagnosis STARTED from test items
+test_0013 and test_0048 — allowed only for diagnosis; the failure classes were then searched on dev, fixes validated on dev)
+- **test_0013** (icon, colour-shift + JPEG q86; ours 0.851 vs tuned VTracer 0.882, 16 paths but 1 560 nodes, ragged
+  outlines). Root cause, measured on the label map: the palette has 4 colours for a 2-colour icon — a pink *halo* band
+  (L .957) on the light side and a darker *rim* band (L .52) on the dark side of every edge (JPEG ringing / chroma
+  subsampling overshoot). They are 1-px bands fragmented into 154 small components. The AA sliver removal does not
+  remove them because (a) they are not mixtures of the two sides (they overshoot: rim is 0.06 OKLab off the
+  purple–cream segment, > radius 0.045) and (b) halo and rim are adjacent, so each band's main neighbour is the other
+  band. Every shape then gets a jagged boundary through dozens of fragments.
+  Same class on dev (thin components whose colour is < 0.09 OKLab from an adjacent label, counted after quantisation):
+  dev_0028 (logo, jpeg; 90 such components, 4 colours for a 2-colour logo, 107 regions), dev_0005 (icon, noise; 52),
+  dev_0029 (logo, noise; 192), plus JPEG line art / diagrams (dev_0092, 0097, 0118, 0089, 0108 ...).
+- **test_0048** (flat_illustration emoji, JPEG q74; ours 0.805 = VTracer photo preset vs tuned VTracer 0.806). Root
+  cause: classifier → "photo" (c90 = 24 colours > 13.5 because of JPEG noise, flat share 0.51 < 0.53) → the image never
+  reaches the region engine. With preset logo/gradient the region engine scores 0.895 / 0.905 (9 KB instead of 134 KB).
+  Failure class: compressed/noisy flat art classified as photo from colour-count features. On dev: dev logo→photo (1),
+  gradient→photo (1). Fix belongs to the classifier work (C-5).

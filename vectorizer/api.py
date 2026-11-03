@@ -36,6 +36,7 @@ DEFAULTS = dict(
     upscale_scaled=("corner_scale", "seam_width"),  # px-unit options rescaled when upscaling
     upscale_max_side=3072,   # max mode never processes more than this many px on the long side
     max_region_density=0.008,  # preset="auto": >8 regions per 1000 px (dev: flat art <= 5.7, photos 18-26) -> photo engine
+    photo_fallback=None,     # region-explosion fallback to the photo engine: None = only with preset "auto", True/False force
     low_alpha=24,
     cutout=False,            # cut-file geometry: real holes, no stacking overlaps, no seams, one path per colour
     drop_background=False,   # cut: remove the background colour (it is not cut / weeded)
@@ -55,6 +56,9 @@ DEFAULTS = dict(
     slivers=True,            # remove thin AA/JPEG bands whose colour mixes their neighbours
     merge_frac=0.6,          # palette colours closer than merge_frac*color_radius are merged
     mix_suppress=False,      # drop palette colours explainable as AA mixtures (line_art/diagram presets)
+    fringe=None,             # edge-fringe clean-up after quantisation: None/"halo"/"colour"/"both"/"auto" (pipeline/fringe.py;
+                             # "auto" = "halo" for the presets in FRINGE_PRESETS, off for line art: it erases thin lines)
+    fringe_near=0.09,        # OKLab distance under which a thin edge band counts as an overshoot of its neighbour
 )
 
 
@@ -62,6 +66,7 @@ DEFAULTS = dict(
 # twice as tight); measured gains on icon/logo/line_art/diagram, losses on gradients -> not applied there.
 MAX_MODE = dict(upscale=2)
 MAX_MODE_PRESETS = {"icon", "logo", "flat_illustration", "line_art", "diagram"}
+FRINGE_PRESETS = {"icon", "logo", "flat_illustration"}
 _PX_DEFAULTS = dict(corner_scale=3.0, seam_width=1.0)
 
 
@@ -179,6 +184,9 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
     unknown = set(opts) - set(DEFAULTS)
     if unknown:
         raise TypeError(f"unknown option(s): {sorted(unknown)}")
+    fallback = auto if opts["photo_fallback"] is None else bool(opts["photo_fallback"])
+    if opts["fringe"] == "auto":
+        opts["fringe"] = "halo" if preset in FRINGE_PRESETS else None
 
     def finish(svg):
         timings["total"] = time.perf_counter() - t_all
@@ -214,8 +222,21 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
                                                 thin_lines=opts["thin_lines"], mix_suppress=opts["mix_suppress"],
                                                 slivers=opts["slivers"], merge_frac=opts["merge_frac"],
                                                 denoise=opts["denoise"], low_alpha=opts["low_alpha"],
-                                                bail_density=opts["max_region_density"] * 4 if auto else None)
+                                                bail_density=opts["max_region_density"] * 4 if fallback else None)
         timings["quantize"] = time.perf_counter() - t
+        if opts["fringe"] and not qinfo.get("bailed"):
+            from .pipeline.fringe import clean_fringe
+            from .pipeline.boundary import label_regions
+            t = time.perf_counter()
+            lbl, nfr = clean_fringe(lbl, lab, pal_lab, method=opts["fringe"], near=opts["fringe_near"])
+            if nfr:
+                used = np.unique(lbl[lbl >= 0])
+                remap = np.full(len(pal_lab), -1, np.int32)
+                remap[used] = np.arange(len(used))
+                lbl = np.where(lbl >= 0, remap[np.maximum(lbl, 0)], lbl).astype(np.int32)
+                pal_lab, pal_rgb = pal_lab[used], pal_rgb[used]
+                qinfo = dict(qinfo, n_colors=len(used), n_regions=int(len(label_regions(lbl)[1])), fringe_px=nfr)
+            timings["fringe"] = time.perf_counter() - t
         stats.update(qinfo)
         if opts["cutout"]:
             from .pipeline import cut as _cut
@@ -231,7 +252,7 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
                 if bgl >= 0 and (lbl == bgl).mean() < 0.95:
                     lbl = np.where(lbl == bgl, -1, lbl)
             timings["cut"] = time.perf_counter() - t
-        if auto and qinfo["n_regions"] > 300 and qinfo["n_regions"] > H * W * opts["max_region_density"]:
+        if fallback and qinfo["n_regions"] > 300 and qinfo["n_regions"] > H * W * opts["max_region_density"]:
             # region explosion (texture / noise / star fields misclassified as flat art): photo engine
             stats["fallback"] = f"photo ({qinfo['n_regions']} regions)"
             preset = "photo"

@@ -1,0 +1,4 @@
+name: C_base
+description: Final pipeline, default settings (preset auto, mode fast).
+method: pipeline
+params: {preset: auto}
