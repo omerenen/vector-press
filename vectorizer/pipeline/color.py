@@ -24,9 +24,15 @@ _M1i = np.linalg.inv(_M1.astype(np.float64)).astype(np.float32)
 _M2i = np.linalg.inv(_M2.astype(np.float64)).astype(np.float32)
 
 
+_LIN8 = srgb_to_linear(np.arange(256, dtype=np.float32) / 255.0)   # uint8 lookup table (identical values)
+
+
 def rgb8_to_oklab(rgb):
     """uint8/float(0..255) RGB (...,3) -> OKLab float32 (...,3)."""
-    lin = srgb_to_linear(np.asarray(rgb, np.float32) / 255.0)
+    if isinstance(rgb, np.ndarray) and rgb.dtype == np.uint8:
+        lin = _LIN8[rgb]
+    else:
+        lin = srgb_to_linear(np.asarray(rgb, np.float32) / 255.0)
     lms = lin @ _M1.T
     lms = np.cbrt(np.maximum(lms, 0))
     return (lms @ _M2.T).astype(np.float32)

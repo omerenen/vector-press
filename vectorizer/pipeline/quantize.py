@@ -32,7 +32,38 @@ def local_contrast(lab):
 
 
 def _dir_stats(lab):
-    """Per direction (a-b, a-p, p-b distances, midpoint distance, midpoint colour) - computed once."""
+    """Per direction (a-b, a-p, p-b distances, midpoint distance, midpoint colour) - computed once.
+
+    Returns [(a, b, |a-b|, |a-p|, |p-b|)] for the 4 directions, a/b = opposite neighbours (edge padded).
+    |a-p| at p equals |p-b| at p-d, so each direction needs one neighbour-distance plane plus the 2-step distance;
+    channel planes avoid slow reductions over the size-3 axis (same values as _dir_stats_ref)."""
+    H, W, _ = lab.shape
+    P = np.pad(lab, ((1, 1), (1, 1), (0, 0)), mode="edge")
+    Pc = [np.ascontiguousarray(P[..., c]) for c in range(3)]
+    out = []
+    for dy, dx in ((0, 1), (1, 0), (1, 1), (1, -1)):
+        a = P[1 - dy:1 - dy + H, 1 - dx:1 - dx + W]
+        b = P[1 + dy:1 + dy + H, 1 + dx:1 + dx + W]
+        # D[y, x] = |P[y, x] - P[y+dy, x+dx]| on the padded grid, for y in [0, H+1-dy), x in valid range
+        x0 = max(0, -dx)
+        x1 = W + 2 - max(0, dx)
+        s = None
+        s2 = None
+        for c in range(3):
+            q = Pc[c]
+            d = q[0:H + 2 - dy, x0:x1] - q[dy:H + 2, x0 + dx:x1 + dx]
+            s = d * d if s is None else s + d * d
+            e = q[1 - dy:1 - dy + H, 1 - dx:1 - dx + W] - q[1 + dy:1 + dy + H, 1 + dx:1 + dx + W]
+            s2 = e * e if s2 is None else s2 + e * e
+        D = np.sqrt(s)
+        # pb(p) = D at padded p = (y+1, x+1) -> index (y+1, x+1-x0); ap(p) = D at (y+1-dy, x+1-dx-x0)
+        pb = D[1:1 + H, 1 - x0:1 - x0 + W]
+        ap = D[1 - dy:1 - dy + H, 1 - dx - x0:1 - dx - x0 + W]
+        out.append((a, b, np.sqrt(s2), ap, pb))
+    return out
+
+
+def _dir_stats_ref(lab):
     H, W, _ = lab.shape
     P = np.pad(lab, ((1, 1), (1, 1), (0, 0)), mode="edge")
     c = P[1:-1, 1:-1]
@@ -160,7 +191,17 @@ def extract_palette(lab, valid, radius=0.045, max_colors=64, min_frac=0.0002, mi
     q -= q.min(0)
     dims = q.max(0) + 1
     key = (q[:, 0].astype(np.int64) * dims[1] + q[:, 1]) * dims[2] + q[:, 2]
-    uk, inv, cnt = np.unique(key, return_inverse=True, return_counts=True)
+    nkeys = int(dims[0]) * int(dims[1]) * int(dims[2])
+    if nkeys <= (1 << 22):
+        # dense histogram (O(N), no sort); same bins / order as np.unique
+        full = np.bincount(key, minlength=nkeys)
+        uk = np.nonzero(full)[0]
+        cnt = full[uk]
+        pos = np.zeros(nkeys, np.int64)
+        pos[uk] = np.arange(len(uk))
+        inv = pos[key]
+    else:
+        uk, inv, cnt = np.unique(key, return_inverse=True, return_counts=True)
     sums = np.stack([np.bincount(inv, weights=px[:, c], minlength=len(uk)) for c in range(3)], 1)
     cols = (sums / cnt[:, None]).astype(np.float32)
     N = valid.sum()
@@ -437,10 +478,40 @@ def merge_small_regions(lbl, pal, min_area, passes=3, connectivity=4):
     return lbl
 
 
+def label_medians(lbl, lab, flat, fallback):
+    """Per label k: median OKLab colour of its flat pixels (all its pixels if < 3 are flat; `fallback[k]` if none).
+    One sort of the pixel labels instead of one full-image mask per label (identical to the per-label loop)."""
+    K = len(fallback)
+    out = np.array(fallback, np.float32).reshape(K, 3).copy()
+    if K == 0:
+        return out
+    lf = lbl.ravel()
+    labf = lab.reshape(-1, 3)
+    okf = (lf >= 0) & flat.ravel()
+    cnt_flat = np.bincount(lf[okf], minlength=K)
+    use_flat = cnt_flat >= 3
+    sel = (lf >= 0) & (flat.ravel() | ~use_flat[np.maximum(lf, 0)])
+    idx = np.nonzero(sel)[0]
+    lk = lf[idx]
+    order = np.argsort(lk, kind="stable")
+    idx, lk = idx[order], lk[order]
+    starts = np.searchsorted(lk, np.arange(K + 1))
+    for k in range(K):
+        a, b = starts[k], starts[k + 1]
+        if b > a:
+            out[k] = np.median(labf[idx[a:b]], axis=0)
+    return out
+
+
 def quantize(rgb, alpha, radius=0.045, max_colors=64, min_area=None, window=2, alpha_threshold=128,
              thin_lines=True, mix_suppress=True, slivers=True, merge_frac=0.6, denoise=0, min_area_scale=1.0,
-             low_alpha=0, bail_density=None):
-    """Return (labels HxW int32 with -1 transparent, palette_rgb (K,3) float, palette_lab, info dict)."""
+             low_alpha=0, bail_density=None, segment="palette", seg_lambda=0.01, seg_snap=0.0):
+    """Return (labels HxW int32 with -1 transparent, palette_rgb (K,3) float, palette_lab, info dict).
+
+    segment: "palette" (phase-1: palette components + fixed-area speckle merge) or "ms" (palette components as an
+    over-segmentation, then Mumford-Shah region merging with boundary price seg_lambda per 1024 px of image size;
+    every region keeps its own mean colour; seg_snap > 0 snaps region colours closer than seg_snap (OKLab) together).
+    """
     H, W, _ = rgb.shape
     lab = rgb8_to_oklab(rgb)
     valid = alpha >= alpha_threshold
@@ -461,6 +532,9 @@ def quantize(rgb, alpha, radius=0.045, max_colors=64, min_area=None, window=2, a
     pal, flat = extract_palette(lab, valid, radius=radius, max_colors=max_colors, noise=noise, mix_suppress=mix_suppress,
                                 merge_frac=merge_frac, stats=stats)
     lbl = assign_labels(lab, valid, pal, flat, window=window)
+    if segment == "ms":
+        return _quantize_ms(lab, valid, flat, pal, lbl, noise, stats, thin_lines, slivers, radius, seg_lambda,
+                            seg_snap, bail_density, H, W)
     if bail_density:
         from .boundary import label_regions
         n0 = len(label_regions(lbl)[1])
@@ -483,13 +557,48 @@ def quantize(rgb, alpha, radius=0.045, max_colors=64, min_area=None, window=2, a
     remap[used] = np.arange(len(used))
     lbl = np.where(lbl >= 0, remap[np.maximum(lbl, 0)], TRANSPARENT).astype(np.int32)
     K = len(used)
-    m = (lbl >= 0) & flat
-    newpal = np.zeros((K, 3), np.float32)
-    for k in range(K):
-        mk = m & (lbl == k)
-        if mk.sum() < 3:
-            mk = lbl == k
-        newpal[k] = np.median(lab[mk], axis=0) if mk.any() else pal[used[k]]
+    newpal = label_medians(lbl, lab, flat, pal[used])
     from .boundary import label_regions
     info = {"noise": noise, "n_colors": K, "min_area": min_area, "n_regions": int(len(label_regions(lbl)[1]))}
+    return lbl, oklab_to_rgb8(newpal), newpal, info, lab
+
+
+def _quantize_ms(lab, valid, flat, pal, lbl, noise, stats, thin_lines, slivers, radius, seg_lambda, seg_snap,
+                 bail_density, H, W):
+    from .boundary import label_regions
+    from .segment import ms_merge, snap_colors
+    if thin_lines in (True, "ridge", "both"):
+        lbl = rescue_ridges(lab, lbl, pal, valid, noise, stats=stats)
+    R0, _ = label_regions(lbl)
+    R0 = np.where(valid, R0, -1)
+    n0 = int(R0.max()) + 1
+    if bail_density and n0 > 0.25 * H * W:
+        # pure noise: the caller switches engines
+        return lbl, oklab_to_rgb8(pal), pal, {"noise": noise, "n_colors": len(pal), "min_area": 0,
+                                              "n_regions": int(n0), "bailed": True}, lab
+    lam = seg_lambda * np.sqrt(H * W) / 1024.0
+    R1, minfo = ms_merge(R0, lab, lam)
+    R1 = R1.astype(np.int32)
+    K = int(R1.max()) + 1
+    m = flat & (R1 >= 0)
+    cnt = np.bincount(R1[m], minlength=K).astype(np.float64)
+    S = np.stack([np.bincount(R1[m], weights=lab[..., c][m], minlength=K) for c in range(3)], 1)
+    ma = R1 >= 0
+    cnt_all = np.bincount(R1[ma], minlength=K).astype(np.float64)
+    S_all = np.stack([np.bincount(R1[ma], weights=lab[..., c][ma], minlength=K) for c in range(3)], 1)
+    use_flat = cnt >= 3
+    newpal = np.where(use_flat[:, None], S / np.maximum(cnt, 1)[:, None],
+                      S_all / np.maximum(cnt_all, 1)[:, None]).astype(np.float32)
+    lbl = R1
+    if slivers:
+        lbl = remove_slivers(lbl, lab, newpal, radius)
+    if seg_snap > 0:
+        lbl, newpal = snap_colors(lbl, newpal, seg_snap)
+    used = np.unique(lbl[lbl >= 0])
+    remap = np.full(len(newpal), -1, np.int32)
+    remap[used] = np.arange(len(used))
+    lbl = np.where(lbl >= 0, remap[np.maximum(lbl, 0)], TRANSPARENT).astype(np.int32)
+    newpal = newpal[used]
+    info = {"noise": noise, "n_colors": len(newpal), "min_area": 0, "n_init": n0, "ms_rounds": minfo["rounds"],
+            "n_regions": int(len(label_regions(lbl)[1]))}
     return lbl, oklab_to_rgb8(newpal), newpal, info, lab

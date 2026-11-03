@@ -55,6 +55,9 @@ DEFAULTS = dict(
     slivers=True,            # remove thin AA/JPEG bands whose colour mixes their neighbours
     merge_frac=0.6,          # palette colours closer than merge_frac*color_radius are merged
     mix_suppress=False,      # drop palette colours explainable as AA mixtures (line_art/diagram presets)
+    segment="palette",       # "palette" (phase 1) | "ms": Mumford-Shah region merging of the palette over-segmentation
+    seg_lambda=0.01,         # ms: boundary price (OKLab^2 per px of boundary at 1024 px); larger = fewer regions
+    seg_snap=0.0,            # ms: snap region colours closer than this (OKLab) to one paint (0 = off)
 )
 
 
@@ -214,7 +217,9 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
                                                 thin_lines=opts["thin_lines"], mix_suppress=opts["mix_suppress"],
                                                 slivers=opts["slivers"], merge_frac=opts["merge_frac"],
                                                 denoise=opts["denoise"], low_alpha=opts["low_alpha"],
-                                                bail_density=opts["max_region_density"] * 4 if auto else None)
+                                                bail_density=opts["max_region_density"] * 4 if auto else None,
+                                                segment=opts["segment"], seg_lambda=opts["seg_lambda"],
+                                                seg_snap=opts["seg_snap"])
         timings["quantize"] = time.perf_counter() - t
         stats.update(qinfo)
         if opts["cutout"]:

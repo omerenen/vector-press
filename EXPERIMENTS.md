@@ -282,3 +282,28 @@ explodes on DALL-E textures (painterly shading, generator noise, fine fake detai
 Our lead over VTracer on the target set is therefore small (0.702 vs 0.680) — the key target problem is a segmentation /
 palette stage that turns textured AI art into clean, compact, print/cut-ready regions (→ stream B). Cut preset: overlap
 ≈ 0 by construction, but still ~1 800 paths and ~300 KB for a cut file (same root cause).
+
+## Phase 2 — stream B
+
+### B-0 Diagnosis (before code changes): why the region engine explodes on tdev
+Measured stage by stage on the worst tdev images (`quantize` internals, label maps and renders viewed side by side with
+the input and VTracer):
+1. **Early bail-out counts fragments, not regions.** `quantize(bail_density=4×0.008)` counts 4-connected components of
+   the *raw* nearest-palette assignment, before any clean-up. DALL-E output carries generator noise / paper grain /
+   halftone dots, so this raw map is salt-and-pepper: tdev_0051 (clean cartoon sticker) has 39 119 raw components but only
+   815 regions after the phase-1 clean-up → it is routed to VTracer anyway (11 184 paths, 1.06 MB, visibly worse).
+   tdev_0000 (stencil with halftones) has 303 k raw components (> 0.1·HW) → VTracer with the "pure noise" parameters
+   (1 256 blobby paths, composite 0.481 vs VTracer default 0.607).
+2. **The fixed-area speckle merge cannot converge in texture.** `merge_small_regions` moves each component smaller than
+   `min_area` into the most similar neighbouring *label*; inside texture all neighbours are fragments too, so fragments
+   merge into fragments and stay small. tdev_0003: 71 903 components → 38 431 / 27 132 / 22 802 after passes 1/2/3,
+   19 109 after 7 passes; median region area stays 2–3 px (min_area 42). Sliver removal then halves it (10 112) but the
+   result is still far above the fallback threshold (11 521 regions, 4.5 MB through VTracer).
+3. **Palette quantisation with a fixed OKLab radius (0.045, ≤64 colours) is the wrong primitive for shaded art.** Region
+   colours are palette colours, so soft shading needs either many palette colours (→ more fragments) or posterises.
+4. **Thin bright features are lost** where the region engine does run (tdev_0039 hair strands, tdev_0000 bow string):
+   speckle merge / sliver removal treat 1–3 px strands as noise (edge-F 0.699 vs VTracer 0.929).
+Consequence: 37/53 images go to VTracer (photo parameters, ≤1024 px) and ~8 images that stay in the region engine are
+worse than VTracer default (0000, 0017, 0020, 0024, 0039, 0045, 0048, 0049).
+Root cause in one sentence: the clean-up stage decides by *area* only (fixed speckle size), so it has no notion of how
+much a merge costs in colour error versus how much boundary (= SVG bytes) it saves.
