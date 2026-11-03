@@ -3151,5 +3151,80 @@
     "gz_bytes": 87267.8
    }
   }
+ },
+ "color_precision=7,corner_threshold=90,filter_speckle=8,layer_difference=32,length_threshold=4.0": {
+  "params": {
+   "filter_speckle": 8,
+   "color_precision": 7,
+   "layer_difference": 32,
+   "corner_threshold": 90,
+   "length_threshold": 4.0
+  },
+  "summary": {
+   "ALL": {
+    "composite": 0.7856559026048823,
+    "ssim": 0.9242375037217906,
+    "de_mean": 2.5314567158700085,
+    "edge_f": 0.8807324777738199,
+    "n_paths": 41.676923076923075,
+    "gz_bytes": 25530.584615384614
+   },
+   "icon": {
+    "composite": 0.8239891610468743,
+    "ssim": 0.9549801580938608,
+    "de_mean": 1.6908782548724068,
+    "edge_f": 0.9187529615771485,
+    "n_paths": 23.25,
+    "gz_bytes": 14317.65
+   },
+   "logo": {
+    "composite": 0.8192071122459728,
+    "ssim": 0.9422339084130293,
+    "de_mean": 1.8203534757516313,
+    "edge_f": 0.9457074346117075,
+    "n_paths": 17.85,
+    "gz_bytes": 12904.65
+   },
+   "flat_illustration": {
+    "composite": 0.8398397245226151,
+    "ssim": 0.9534830319276317,
+    "de_mean": 0.9951169428899489,
+    "edge_f": 0.935324993027869,
+    "n_paths": 19.35,
+    "gz_bytes": 13824.1
+   },
+   "line_art": {
+    "composite": 0.8052049511607846,
+    "ssim": 0.9471649363462822,
+    "de_mean": 2.5893309244728675,
+    "edge_f": 0.959591862545253,
+    "n_paths": 35.05,
+    "gz_bytes": 22454.7
+   },
+   "diagram": {
+    "composite": 0.7508344294741579,
+    "ssim": 0.9271228437528956,
+    "de_mean": 2.3193296571370263,
+    "edge_f": 0.8818439161000949,
+    "n_paths": 52.8,
+    "gz_bytes": 33250.75
+   },
+   "gradient": {
+    "composite": 0.7500557599554526,
+    "ssim": 0.9269037443651094,
+    "de_mean": 4.930127986177643,
+    "edge_f": 0.7465253450576821,
+    "n_paths": 33.2,
+    "gz_bytes": 18367.0
+   },
+   "photo": {
+    "composite": 0.635264457051755,
+    "ssim": 0.7113103025856601,
+    "de_mean": 4.218662823707062,
+    "edge_f": 0.6740291852201471,
+    "n_paths": 178.8,
+    "gz_bytes": 101659.9
+   }
+  }
  }
 }

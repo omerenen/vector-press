@@ -130,3 +130,8 @@ Lee sigma filter in OKLab (3×3, threshold max(0.03, 4σ_noise)) before palette 
 1 iteration: composite **0.895 (+0.006)**, PSNR +0.54, ΔE −0.044, edgeF +0.007, edge_dev −0.019, gz −13 %;
 every category improves (gradient +0.015, logo +0.007). 2 iterations: same overall, diagram slightly worse, slower.
 **Keep, denoise=1 default.**
+
+## Best versions (git tags cannot be pushed from this environment: HTTP 403 on refs/tags; recorded here instead)
+| tag | commit | dev composite | note |
+|---|---|---|---|
+| best-v1 | e07f24d | 0.895 | graph engine + presets + gradients + denoise (exp_010) |
