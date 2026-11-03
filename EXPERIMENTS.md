@@ -435,3 +435,13 @@ dev_0029, dev_0069) and the photos. All categories within the no-regression tole
 edge_f ±0, nodes −0 %, gz +0 %, overlap ratio +0.01, tiny islands −2.4 / image, thin features ±0, **self-intersections
 121 → 56 per image**. 39 of 53 outputs are byte-identical (VTracer fallback, untouched by stream A); on the 14 graph-engine
 outputs self-intersections go **3460 → 0**. (The target score is dominated by the segmentation / fallback problem → stream B.)
+
+**proc2 (60 scenes, new generator seed/ranges, treated as held-out, run once)**: composite 0.887 (+0.002), SSIM +0.000,
+PSNR +0.18, ΔE −0.010, edge_f −0.000, edge_dev −0.009, gap 0, corner recall 0.606 (+0.079), corner_err 0.848 (−0.097),
+prim recovery per-image 0.585 (+0.280), **pooled 46/157 → 101/157 (0.293 → 0.643)** (rect 25→57/71, roundrect 15→32/54,
+polygon 0→3/10, star 0→1/5, triangle 3→4/8, circle 2→3/5, ellipse 1/4), self-intersections 18.7 → **0**, nodes −1 %,
+gz −1 %; per category flat_illustration +0.002, line_art +0.002, diagram +0.004, gradient +0.000 (PSNR −0.02, ΔE +0.005,
+within tolerance). Overfitting check passed: the gain is as large as on dev. Flat_illustration nodes +33 % come from a
+single image (proc2_0012: one 8 000-px background loop whose ordinary chain still crossed an exact primitive edge after
+the polyline repair → emitted as `make_valid` parts with flattened curves, 1 126 → 5 304 nodes). After the run the valid
+parts are thinned (DP 0.15 px, re-validated on the output grid): 5 304 → 3 675 nodes on that image (not re-run on all of proc2).

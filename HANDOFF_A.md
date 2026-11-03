@@ -25,8 +25,37 @@ point–ellipse distance (vectorised Newton; was 720-point sampling), `robust_er
 `np.percentile`), the rounded-rect radius grid is vectorised (same values), `choose_closed_primitive()` is the refactored
 chain-level model selection (same decisions with `rect_refine=False`, `blur_sharp_ratio=0`).
 
-## Numbers vs phase2-base (full runs, `printcut: true`)
-_(see section below, filled from eval/reports/A_final vs A_base)_
+## Numbers vs phase2-base (full runs, `printcut: true`; `A_base` = clean `git archive phase2-base`, `A_final` = this branch)
+Reports: `eval/reports/A_base`, `eval/reports/A_final` (`python -m eval.compare A_base A_final --split dev|tdev|proc2`).
+
+**dev (130)** — every category within the no-regression tolerances:
+| cat | composite | SSIM | PSNR | ΔE | edge_f | edge_dev | gap | corner rec | prim | nodes | self-x |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| ALL | 0.907 (+0.002) | 0.970 (+0.001) | +0.38 dB | −0.016 | +0.001 | −0.007 | 0 | 0.856 (+0.034) | **0.844 (+0.378)** | −0 % | **0.53 (−2.47)** |
+| icon | +0.001 | +0.000 | +0.29 | −0.005 | +0.000 | −0.001 | 0 | | | −3 % | 0 (−0.85) |
+| logo | +0.001 | +0.001 | +0.47 | −0.014 | −0.000 | −0.006 | 0 | | | −2 % | 0.05 (−1.70)¹ |
+| flat_illustration | +0.005 | +0.001 | +1.09 | −0.024 | +0.001 | −0.015 | 0 | 0.958 (+0.184) | 0.917 (+0.500) | −3 % | 0 (−1.00) |
+| line_art | +0.002 | +0.001 | +0.30 | −0.019 | +0.000 | −0.004 | 0 | | | −2 % | 0 (−6.75) |
+| diagram | +0.004 | +0.002 | +0.32 | −0.044 | +0.002 | −0.015 | 0 | 0.868 (−0.004) | 0.822 (+0.341) | −5 % | 0 (−1.90) |
+| gradient | +0.001 | +0.000 | +0.00 | −0.001 | +0.004 | −0.000 | 0 | 0.642 (0) | | −3 % | 0.20 (−3.85)¹ |
+| photo | 0 | 0 | 0 | 0 | 0 | | | | | 0 | 6.4 (0)¹ |
+¹ only in images that go to the VTracer engine (photo class / fallback). Pooled dev primitives 58/122 → 103/122 (rect
+36→58/73, roundrect 18→38/42, triangle 2→3, polygon 1→2, star 0→1, ellipse 1/1). Official corner_err 0.987 → 0.948
+(flat 0.70 → 0.53); see the metric note below.
+
+**tdev (53, primary score)**: composite 0.702 (+0.000), SSIM +0.000, PSNR +0.015, ΔE −0.001, edge_f ±0, nodes −0 %,
+gz +0 %, tiny islands −2.4/image, self-intersections 121 → 56/image. 39/53 outputs are byte-identical (VTracer fallback);
+on the 14 graph-engine outputs self-intersections **3460 → 0**.
+
+**proc2 (60, held-out generator, run once)**: composite 0.887 (+0.002), PSNR +0.18, ΔE −0.010, edge_dev −0.009, gap 0,
+corner recall +0.079, prim recovery pooled **0.293 → 0.643** (per-image mean 0.305 → 0.585), self-intersections 18.7 → 0,
+nodes −1 %, gz −1 %; every category within tolerance. One image (proc2_0012) gets +4 000 nodes from an unrepairable crossing
+emitted as flattened valid parts (thinned afterwards: 5 304 → 3 675; see open problems).
+
+**Primitive target**: dev recovery 0.844 pooled (target ≥ 0.75 ✓), confirmed on proc2 (0.29 → 0.64; proc2 scenes are
+busier: remaining failures there are mostly segmentation / occlusion by thin strokes).
+**Corner target**: not reachable as defined (metric floor 0.44–1.15 px, see below); recall +0.034 dev / +0.079 proc2,
+official corner_err −0.04 / −0.10, peak-relative error 0.26 px on dev_small.
 
 ## Files touched
 In scope: `vectorizer/pipeline/fit.py`, `vectorizer/pipeline/boundary.py` (Chain gets `samples`, `snapped`),
@@ -69,4 +98,8 @@ RESEARCH.md (own sections). No metric code changed.
   instead of corner); the line-pair detector found them but also produced false corners (rejected). A curvature-scale
   check of the arms or a learned corner classifier would be the next step.
 - Lattice pinch points are split into two rings that touch at one point (valid rings, still a single touching point).
-- Repaired loops use polylines (sub-pixel samples, DP 0.25 px): a few more nodes locally.
+- Repaired loops use polylines (sub-pixel samples, DP 0.25 px): a few more nodes locally. A loop whose ordinary chain still
+  crosses an exact primitive edge after the raw-polyline level is emitted as its `make_valid` parts with flattened curves
+  (rare: 1 loop in proc2_0012, +2 500 nodes even after DP thinning). Better: un-snap that primitive (needs stored
+  pre-snap geometry incl. moved junctions) or a local-window repair.
+- Cost: all new options ≈1.4× pipeline CPU on dev images (diagrams/line art up to 2×); timing not measured (shared CPU).

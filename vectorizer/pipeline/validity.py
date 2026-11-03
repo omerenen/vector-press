@@ -276,10 +276,15 @@ def valid_parts(P, prec=2):
     if len(polys) > 1:
         polys = [p for p in polys if p.area >= min_area] or [max(polys, key=lambda p: p.area)]
     out = []
+    from shapely import set_precision as _sp
     for p in polys:
         p = orient(p, sgn)
         if not p.exterior.is_simple:
             p = orient(p.simplify(10.0 ** -prec), sgn)
+        # the flattened curves would cost ~8 nodes per cubic: thin them (0.15 px) while staying valid on the grid
+        q = _sp(p.simplify(0.15, preserve_topology=True), 10.0 ** -prec)
+        if q.geom_type == "Polygon" and not q.is_empty and q.is_valid and q.exterior.is_simple:
+            p = orient(q, sgn)
         out.append(np.asarray(p.exterior.coords)[:-1])
         for it in p.interiors:
             out.append(np.asarray(it.coords)[:-1])
