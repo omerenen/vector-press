@@ -401,14 +401,15 @@ costs +12 % over that on flat art (quantize/fit ratio 0.80 → 0.98, base 1.36):
 from the phase-1 stage medians (quantize 1.18→~0.85 s, fit unchanged 0.6 s) → the ≤1.2 s target needs fit-stage work
 (stream A) too; real timing by the lead.
 
-### B-7 Full runs (defaults: segment="ms", seg_premerge, routing B-4; code snapshot = commit 9ea9d0b-equivalent tree of
-`vectorizer/` at the time of the run, recorded in HANDOFF_B.md) vs phase2-base re-run (`B_base_*`)
+### B-7 Full runs (defaults: segment="ms", seg_premerge, routing B-4; code = commit d7f1949, `vectorizer/` unchanged
+since) vs phase2-base re-run (`B_base_*`)
 - tdev t_final (53): composite **0.702 → 0.724** (VTracer default 0.680), SSIM 0.796 → 0.818, ΔE 3.35 → 3.07,
   edge-F 0.865 → 0.882, LPIPS 0.185 → 0.169; every category ≥ base (cutfile +0.028, logo +0.021, poster +0.020,
   sticker +0.032, tshirt =, vector_flat +0.019 with median paths 11 222 → 3 334 and 1.32 MB → 393 KB); 22 images
   better, 3 worse (0040 −0.034, 0013 −0.008, 0007 −0.006).
 - dev (130): **0.9044 → 0.9050**, all categories within tolerance, valid 100 %, gap 0 (per-category table in HANDOFF_B.md).
-- tdev t_cut: see HANDOFF_B.md.
+- tdev t_cut (53): composite 0.326 → 0.331; tiny islands 2.25 → 1.42, thin features 48.2 → 40.2, thin area
+  81.7 → 69.1 mm², self-intersections 42.3 → 37.3, gz 81.7 → 68.1 KB (median), nodes 8 223 → 6 962; ΔE +0.5.
 Honest limitation: 35/53 tdev outputs are still VTracer-like (photo engine) because on heavy texture the composite
 prefers the 30 k-path stack; the clean region output for those images exists (print/cut intents, `seg_budget`) but
 scores lower (tdev_small print: 0.654 vs 0.671 for the old run with fallbacks; 368 KB vs 1.2 MB, 1 176 vs 7 485 paints,

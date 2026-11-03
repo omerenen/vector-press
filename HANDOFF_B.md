@@ -26,8 +26,8 @@ Speed refactors with identical output (palette engine): symmetric sigma filter, 
 histogram, one-sort label medians, uint8 OKLab LUT, low-alpha pass skipped on opaque input.
 
 ## Numbers vs phase2-base (full runs; see tables below — filled from `eval/runs/B_final_*` vs `B_base_*`)
-Base = `phase2-base` code (`B_base_*`), final = branch defaults (`B_final_*`, snapshot of the commit listed
-in the final EXPERIMENTS entry), full splits, `--workers 2` under the shared lock (timings not valid).
+Base = `phase2-base` code (`B_base_*`), final = branch defaults at commit d7f1949 (`B_final_*`; `vectorizer/` unchanged
+since), full splits, `--workers 2` under the shared lock (timings not valid).
 
 ### tdev, t_final settings (preset auto, LPIPS + print/cut metrics), 53 images
 | cat (n) | composite base → final | SSIM | ΔE | edge-F | LPIPS | paths (med) | gz KB (med) |
@@ -66,7 +66,22 @@ Valid SVG 130/130, gap_px 0 on all items, edge deviation 0.2203 → 0.2191 px; c
 tolerance list; MS merges a few small corner regions – stream A may want to look).
 
 ### tdev, t_cut settings (cut preset)
-TCUT_PLACEHOLDER
+Cut preset (never falls back; background dropped, ≤ 8 paints, 0.5 mm minimum feature at 100 mm width). Fidelity
+numbers are low for both because the dropped background is compared with the input. Means except paths/gz/nodes (median).
+| cat | composite | ΔE | edge-F | LPIPS | gz KB | tiny islands | thin features | thin area mm² | self-x | nodes |
+|---|---|---|---|---|---|---|---|---|---|---|
+| **ALL (53)** | 0.326 → **0.331** | 25.4 → 25.9 | 0.473 → 0.473 | 0.558 → 0.546 | 81.7 → **68.1** | 2.25 → **1.42** | 48.2 → **40.2** | 81.7 → **69.1** | 42.3 → **37.3** | 8 223 → **6 962** |
+| cutfile | 0.233 → 0.245 | 26.3 → 26.7 | 0.338 → 0.339 | 0.696 → 0.679 | 100 → 85 | 1.67 → 0.78 | 43.1 → 30.7 | 84.0 → 67.9 | 46.9 → 37.2 | 10 319 → 8 166 |
+| logo | 0.368 → 0.369 | 30.1 → 31.1 | 0.568 → 0.566 | 0.539 → 0.533 | 58 → 60 | 2.18 → 1.41 | 70.8 → 59.8 | 85.8 → 70.9 | 38.9 → 34.2 | 5 844 → 6 008 |
+| poster | 0.284 → 0.282 | 21.2 → 22.5 | 0.391 → 0.383 | 0.617 → 0.605 | 88 → 80 | 2.27 → 2.00 | 22.0 → 21.8 | 73.0 → 63.5 | 40.9 → 37.7 | 9 059 → 8 247 |
+| sticker | 0.475 → 0.489 | 11.9 → 11.3 | 0.590 → 0.590 | 0.382 → 0.375 | 55 → 44 | 2.00 → 1.33 | 31.7 → 25.3 | 51.0 → 44.3 | 28.7 → 28.7 | 5 416 → 4 235 |
+| tshirt | 0.530 → 0.533 | 6.6 → 7.2 | 0.468 → 0.451 | 0.440 → 0.423 | 82 → 68 | 1 → 2 | 28 → 20 | 78.1 → 55.2 | 34 → 37 | 8 756 → 6 949 |
+| vector_flat | 0.319 → 0.328 | 26.8 → 26.0 | 0.485 → 0.498 | 0.482 → 0.466 | 91 → 91 | 2.92 → 1.33 | 49.7 → 41.8 | 89.9 → 79.8 | 49.3 → 43.3 | 9 220 → 8 937 |
+Every cut-readiness metric improves (fewer tiny islands / thin features / self-intersections, −17 % bytes, −15 %
+nodes); ΔE +0.5 (paints chosen by area-weighted k-means over MS region colours instead of the palette's top colours).
+Print preset (tdev_small, 18, no fallback): 368 KB vs 1.25 MB, 1 176 vs 7 485 paints, 3 272 vs 8 262 tiny islands,
+overlap 0.10 vs 3.05 compared with the lead's t_print run; composite 0.654 vs 0.671 (that run still contained
+VTracer outputs); self-intersections 258 vs 78 (fit stage on long complex borders, stream A).
 
 
 ## Files touched
