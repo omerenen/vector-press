@@ -386,3 +386,22 @@ composite +0.006 / PSNR +0.64, but corner recall −0.10 overall (diagram −0.1
 and diagrams up to 2×: model selection on every multi-chain loop). Gates: loops clipped by the canvas skipped, rect/ellipse
 only for loops with hull solidity ≥ 0.9, IRLS refinement only when the grid fit is within 2× tolerance, partition-based
 robust error, exact vectorised ellipse distance (replaces 720-point sampling).
+
+### A-7 Snap-time validity (final code) — dev_small `A_final_small`
+A snapped primitive edge may deviate ≤1.5 px from the lattice, so it can cross a neighbouring chain. First version of the
+check (reject the primitive whenever a neighbour outline turns non-simple) removed the crossings but cost primitive
+recovery (dev_small diagram 0.925 → 0.849: thin JPEG slivers along the box edge). Final rule: a primitive is rejected only
+if the neighbour outline cannot be repaired by turning its ordinary crossing chains into raw polylines *and* the
+neighbour is not a sliver (area ≤ 30 px or mean thickness < 2 px; slivers are emitted as their valid parts).
+dev_small, final code vs phase2-base: composite +0.003, SSIM +0.001, PSNR +0.36 dB, ΔE −0.018, edge_f +0.003,
+edge_dev −0.009, corner recall +0.081, prim recovery +0.35, gz −0 %, self-intersections on graph-engine output **0**
+(remaining 0.95/image are the VTracer photo fallbacks), every category within tolerance (no regression).
+Checked items after the sliver rule: dev_0105 prim 0.71 / dev_0108 1.0 (as before the check), self-x 0.
+
+### A-8 Target subset (tdev_small, 19 DALL-E images, `--workers 1`), final vs phase2-base
+14 of the 19 images go to the VTracer fallback (unchanged). Overall: composite ±0.000 (cutfile +0.001), SSIM ±0, PSNR
++0.01 dB, edge_f +0.001, self-intersections 103 → 63 per image (all remaining ones are in VTracer-fallback outputs; the
+graph-engine images go 379→0, 196→0, 140→0, 1→0), tiny islands +0.1 % overall but +23 % on tdev_0021 (line-art cut file:
+526 self-crossing thin-stroke loops repaired with polylines; the thin strokes whose Bézier sides crossed now have their
+real, very small width and fall apart into sub-0.5 mm islands in the raster check; nodes +15 % on that image). Region
+primitives found 40 primitives on tdev_0021 (6 before).
