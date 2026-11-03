@@ -43,6 +43,8 @@ DEFAULTS = dict(
     fit_profile="default",   # "tight": halved fit tolerances at 1x (TIGHT_FIT) for the graph-engine content presets
                              # (= the measured cause of the old max-mode gain, without 4x pixels); not for cut / 2x max
     max_presets=None,        # presets that mode="max" processes at 2x (None = MAX_MODE_PRESETS)
+    graphic_override=False,  # preset="auto": strong-edge graphic art (classifier flat >= 0.2 and ink_edge >= 0.4) keeps
+                             # the region engine however many regions it has (only pure noise, noise_density, bails)
     photo_fallback=None,     # region-explosion fallback to the photo engine: None = only with preset "auto", True/False force
     low_alpha=24,
     cutout=False,            # cut-file geometry: real holes, no stacking overlaps, no seams, one path per colour
@@ -170,6 +172,7 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
     auto = preset == "auto"
     tiny = H == 0 or W == 0 or min(H, W) < 4 or H * W <= 64
     intent = None
+    feats = {}
     if preset in INTENTS:                    # "cut" / "print": content preset from the classifier + intent overrides
         intent, preset, auto = preset, "auto", True
     if auto:
@@ -200,6 +203,10 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
     if unknown:
         raise TypeError(f"unknown option(s): {sorted(unknown)}")
     fallback = auto if opts["photo_fallback"] is None else bool(opts["photo_fallback"])
+    graphic = bool(fallback and opts["graphic_override"] and feats and not feats.get("empty")
+                   and feats["flat"] >= 0.2 and feats["ink_edge"] >= 0.4)
+    if graphic:
+        stats["graphic"] = True
     if opts["fringe"] == "auto":
         opts["fringe"] = "halo" if preset in FRINGE_PRESETS else None
 
@@ -237,7 +244,8 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
                                                 thin_lines=opts["thin_lines"], mix_suppress=opts["mix_suppress"],
                                                 slivers=opts["slivers"], merge_frac=opts["merge_frac"],
                                                 denoise=opts["denoise"], low_alpha=opts["low_alpha"],
-                                                bail_density=opts["max_region_density"] * 4 if fallback else None)
+                                                bail_density=(None if not fallback else opts["noise_density"] if graphic
+                                                              else opts["max_region_density"] * 4))
         timings["quantize"] = time.perf_counter() - t
         if opts["fringe"] and not qinfo.get("bailed"):
             from .pipeline.fringe import clean_fringe
@@ -268,7 +276,8 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
                 if bgl >= 0 and (lbl == bgl).mean() < 0.95:
                     lbl = np.where(lbl == bgl, -1, lbl)
             timings["cut"] = time.perf_counter() - t
-        if fallback and qinfo["n_regions"] > 300 and qinfo["n_regions"] > H * W * opts["max_region_density"]:
+        if (fallback and qinfo["n_regions"] > 300 and qinfo["n_regions"] > H * W * opts["max_region_density"]
+                and (not graphic or qinfo.get("bailed"))):
             # region explosion (texture / noise / star fields misclassified as flat art): photo engine
             stats["fallback"] = f"photo ({qinfo['n_regions']} regions)"
             preset = "photo"

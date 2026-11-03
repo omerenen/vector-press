@@ -89,3 +89,25 @@ Format: what · source · license · expected benefit · CPU feasibility · deci
   placement (exp_011) reads → not prototyped.
 - **Wider sliver mixture test** (quantize.py): cannot see double fringes (each band's main neighbour is the other band) →
   rejected on the diagnosis data.
+### Classifier / engine choice (work item 5)
+- **Better hand features / learned family classifier** (depth-limited tree or logistic regression on dev features):
+  not pursued — the per-image oracle over the four preset families is only +0.0012 above auto on dev_small, and the
+  type labels that are "wrong" (flat_illustration, diagram) share presets. Nothing to learn.
+- **Measured routing instead of predicted routing** (`photo_route="try"`): a classifier "photo" goes to the region
+  engine and reaches VTracer only through the measured region explosion — uses the actual cost signal; kept.
+- **Region-density fallback** (existing): density is a cost proxy, not a quality predictor — on tdev the region engine
+  wins at 48 802 regions and loses at 2 718. The pre-clean early bail-out further mislabels halftone/stencil art as
+  noise. Replaced by: noise-only bail for strong-edge graphics (`graphic_override`, features flat ≥ 0.2 and
+  ink_edge ≥ 0.4) + a noise threshold (`noise_density` 0.35) that separates real noise (0.6 regions/px) from art (≤ 0.22).
+- **Tiny learned engine selector** (logistic regression on the 10 classifier features, LOO-CV on tdev_small + dev_small):
+  considered; with 18 target items two rounded thresholds are as expressive as the data supports — revisit when
+  the full tdev region-engine runs exist (open problem in HANDOFF_C).
+### Fast vs max (work item 9)
+- **Plain 2× bicubic processing** (old max): gains = halved effective fit tolerance (+ diagrams' 1-px outlines), at
+  +93…+193 % bytes and −0.21 primitive recovery.
+- **Tight 1× fitting** (`fit_profile="tight"`, fit_tol 0.3 / line_tol 0.33): same gain on icon/logo/line art without
+  4× pixels; cost proxy: only the fit stage does more work (+25…+100 % nodes), quantisation / graph unchanged.
+- **Selective 2× for line art / diagrams only** (`max_presets`): keeps the diagram gain (+0.015 over tight).
+- **Region-selective upscaling of thin structures / adaptive tolerance by local feature size**: would need per-chain
+  tolerances inside fit.py (stream A) or a thin-structure mask in quantize (stream B); not prototyped — listed as
+  open problem (target: the dev_0117-type 1-px box outlines lost at 1×).

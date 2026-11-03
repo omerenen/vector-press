@@ -366,3 +366,47 @@ gradient preset and reaches VTracer only through the measured region explosion (
 Dev items classified photo (12): dev_0029 (logo, noise) 0.758→**0.861** (143→16 KB), dev_0069 (gradient)
 0.765→**0.866** (97→14 KB); all 10 real photos still end in the photo engine (2 729–18 124 regions) with identical
 output once `noise_density` is fixed (dev_0120 −0.136 with the old 0.1 noise branch).
+
+### C-9b Candidate fast/max split (dev_small; cand0 = fringe auto + photo_route try + noise_density 0.35)
+cand1 = cand0 + `fit_profile="tight"` (fit_tol 0.3 / line_tol 0.33 at 1× for all graph content presets, not for cut):
+ALL +0.005 vs cand0 (icon +0.006, logo +0.004, flat ±0, line_art +0.010, diagram +0.008, gradient +0.003; PSNR +1.3 dB,
+ΔE −0.05, edge_dev −0.020, corner recall +0.006, primitives ±0; bytes +3 % overall, +24…+63 % on flat art).
+cand2 = cand1 + mode="max" with 2× only for line_art/diagram (`max_presets`): vs cand1 line_art −0.003, diagram
+**+0.015** (thin box outlines), bytes +61…+118 %, primitive recovery −0.21 (rects no longer detected at 2×).
+Old max mode vs old fast (C_s_max): icon +0.006 / logo +0.003 / flat +0.001 / line_art +0.007 / diagram +0.023 at
++93…+193 % bytes → for icon/logo/flat the tight 1× profile gives the same or more for ~⅓ of the bytes and no
+primitive loss.
+
+### C-5c Cost of the classifier (dev_small, 44 items; all variants with fringe auto + noise_density 0.35 + fallback on)
+Per-image oracle over the four preset families (FLAT = icon/logo/flat_illustration, LINES = line_art/diagram, GRADIENT,
+PHOTO) vs auto (cand0):
+| cat | auto | FLAT | LINES | GRADIENT | PHOTO | per-image oracle |
+|---|---|---|---|---|---|---|
+| icon | 0.9553 | 0.9553 | 0.9553 | 0.9341 | 0.8204 | 0.9553 |
+| logo | 0.9351 | 0.9351 | 0.9304 | 0.9351 | 0.8393 | 0.9362 |
+| flat_illustration | 0.9618 | 0.9618 | 0.9551 | 0.9618 | 0.8561 | 0.9619 |
+| gradient | 0.8895 | 0.8833 | 0.8626 | 0.8869 | 0.8037 | 0.8920 |
+| line_art | 0.9126 | 0.9134 | 0.9126 | 0.8947 | 0.8193 | 0.9152 |
+| diagram | 0.8875 | 0.8786 | 0.8875 | 0.8783 | 0.7881 | 0.8890 |
+| photo | 0.7609 | (all four fall back) | | | | 0.7609 |
+| ALL | **0.9088** | 0.9067 | 0.9029 | 0.9009 | 0.8156 | 0.9100 |
+True-category oracle (icon/logo/flat→FLAT, line_art/diagram→LINES, gradient→GRADIENT) = the FLAT/LINES/GRADIENT
+columns of the matching rows: equal to auto within ±0.003 (auto is better on gradient). The remaining classifier
+cost on dev is **0.0012** composite (per-image oracle), so "flat_illustration never detected" and "diagram → line_art"
+cost nothing — they share presets. Decision: no learned family classifier (nothing to gain); keep the family
+presets, the type labels are cosmetic. The cross-family error that does matter is "photo" on compressed flat art
+(C-5b) — fixed by routing, not by a better classifier.
+
+### C-5d Engine choice on tdev (region engine vs VTracer) — the real classification problem on the target set
+tdev_small, region engine forced (FLAT preset, no fallback) vs VTracer photo preset, Δcomposite (region − VTracer):
+region wins on strong-edge graphic art: tdev_0012 +0.130, tdev_0051 +0.082, tdev_0039 +0.060, tdev_0000 +0.046,
+tdev_0021 +0.025, tdev_0006/0033/0042 (already region); VTracer wins on painterly / smooth-shaded images: tdev_0003
+−0.125, 0036 −0.122, 0009 −0.125, 0018 −0.129, 0030 −0.083, 0015 −0.080, 0048 −0.068, 0045 −0.044, 0024 −0.038,
+0027 −0.026. Post-clean region density does not separate them (tdev_0030: 2 718 regions, VTracer much better;
+tdev_0039: 48 802 regions, region better); the early bail-out on the *pre*-clean count also sends items with only
+928 (tdev_0051) / 12 345 (tdev_0012, density 0.0067 < 0.008) final regions to VTracer.
+The classifier features separate them: VTracer-better items all have flat < 0.2 (c90 ≥ 67); region-better items have
+flat ≥ 0.2 and ink_edge ≥ 0.4 (exception: tdev_0000, flat 0.187). Dev: all flat art has flat ≥ 0.27 except dev_0102
+(diagram, noise, flat 0.127) — region better there, but it never explodes; dev photos have ink_edge ≤ 0.23.
+New flag `graphic_override` (fitted on tdev_small + dev_small, 2 rounded thresholds; disclosed): when flat ≥ 0.2 and
+ink_edge ≥ 0.4 the density fallback is disabled and only pure noise (`noise_density`) bails.

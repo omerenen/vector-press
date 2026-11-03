@@ -1,0 +1,6 @@
+name: C_tfinal
+description: Stream C final candidate - fringe auto, photo route try, noise density 0.35, graphic override, tight 1x fitting.
+method: pipeline
+params: {preset: auto, fringe: auto, photo_route: try, noise_density: 0.35, graphic_override: true, fit_profile: tight}
+lpips: true
+printcut: true
