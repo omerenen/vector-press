@@ -78,7 +78,7 @@ def build_elements(lbl, palette_rgb, opts, timings=None, label_fill=None, ctx=No
     if opts.get("primitives", True) and opts.get("region_prims", True):
         from .primfit import snap_region_primitives
         t = time.perf_counter()
-        region_prims = snap_region_primitives(regions, chains, opts, drawn, shape=R.shape)
+        region_prims = snap_region_primitives(regions, chains, opts, drawn, shape=R.shape, ctx=ctx)
         timings["region_prims"] = time.perf_counter() - t
     t = time.perf_counter()
     # region opacity from the input alpha (median over the region); < 0.98 -> fill-opacity
@@ -114,6 +114,18 @@ def build_elements(lbl, palette_rgb, opts, timings=None, label_fill=None, ctx=No
             drawn[rid] = False
     order = sorted([r for r in regions if r.label >= 0 and r.loops and r.rid not in converted],
                    key=lambda r: (depth[r.rid], -r.loop_area[r.outer], r.rid))
+    repair = bool(opts.get("geom_repair", False))
+    ring_fix = {}
+    if repair:
+        # every emitted ring must be simple (cutters): split lattice pinches, refit crossing / degenerate loops
+        from .validity import repair_loops, split_pinches
+        tv = time.perf_counter()
+        emit = []
+        for r in order:
+            for li in [r.outer] + ([] if r.fill_holes else [i for i in range(len(r.loops)) if i != r.outer]):
+                emit.extend(split_pinches(r.loops[li], chains))
+        stats_v, ring_fix = repair_loops(emit, chains, prec=prec)
+        timings["validity"] = time.perf_counter() - tv
     rev_cache = {}
 
     def oriented(cid, rev):
@@ -157,6 +169,21 @@ def build_elements(lbl, palette_rgb, opts, timings=None, label_fill=None, ctx=No
                     if li == r.outer and prim is not None and prim["type"] == "polygon":
                         toks += _polygon_tokens(prim["points"], prec)   # without collinear junction vertices
                         n_prims += 1
+                    elif repair:
+                        for sub in split_pinches(r.loops[li], chains):
+                            key = tuple(sub)
+                            if key in ring_fix:          # still self-crossing: emit its valid parts
+                                for ring in ring_fix[key]:
+                                    toks += _polygon_tokens([tuple(p) for p in ring], prec)
+                                continue
+                            gs = [oriented(cid, rev) for cid, rev in sub]
+                            # end the loop with a line / cubic if possible: arc end points are recomputed by
+                            # SVG consumers from the centre parameterisation (float noise at the closing point)
+                            for k in range(len(gs)):
+                                if gs[-1]["segs"] and gs[-1]["segs"][-1][0] != "A":
+                                    break
+                                gs = gs[1:] + gs[:1]
+                            toks += loop_d(gs, prec, exact_close=True)
                     else:
                         toks += loop_d([oriented(cid, rev) for cid, rev in r.loops[li]], prec)
                 fills.setdefault(fill_attr, [fill_attr, []])[1].extend(toks)
@@ -185,12 +212,14 @@ def build_elements(lbl, palette_rgb, opts, timings=None, label_fill=None, ctx=No
     elements.extend(stroke_els)
     timings["assemble"] = time.perf_counter() - t
     stats = {"n_regions": len(order), "n_chains": len(chains), "n_primitives": n_prims, "n_strokes": len(stroke_els)}
+    if repair:
+        stats.update({"geom_" + k: v for k, v in stats_v.items()})
     return elements, stats
 
 
 def _polygon_tokens(points, prec):
     g = {"start": tuple(points[0]), "segs": [("L", tuple(p)) for p in list(points[1:]) + [points[0]]]}
-    return loop_d([g], prec)
+    return loop_d([g], prec, exact_close=True)
 
 
 def _prim_element(p, fill_attr, prec):

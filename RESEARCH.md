@@ -74,3 +74,49 @@ Format: what · source · license · expected benefit · CPU feasibility · deci
   are the same family of ideas, implemented from scratch.
 - **Adobe Image Trace / Inkscape Trace Bitmap** (Inkscape uses Potrace, GPL) — presets per content type (logo, sketch,
   photo) → mirrored by our classifier + presets.
+
+## Phase 2 — stream A (primitive fitting, corners, geometry validity)
+
+### Primitive recovery: why shapes were lost, and the alternatives considered
+Diagnosis (EXPERIMENTS A-1): 54 of 64 dev failures were *detection* failures — the shape's outline is a single loop of
+one region but split into several chains by junctions (fragmented thin strokes, shapes lying on other shapes,
+connectors). Fitting is per chain, so the shape identity is lost before any primitive test runs.
+- **(a) Region-loop model fitting + chain snapping (chosen).** Concatenate the samples of all chains of a region's outer
+  loop, run model selection on the whole outline, then replace each chain by the exact sub-path of the primitive between
+  its junctions and move the junctions onto the outline for every incident chain. Keeps the shared-boundary (watertight,
+  cut-consistent) property, works for every primitive type, cost ∝ number of multi-chain loops. Classical "fit to the
+  region, not to the edge fragment" idea (cf. region-based shape fitting in graphics recognition; own implementation).
+- **(b) Merge fragments in the label map** (absorb thin/small regions along strokes before graph construction): fixes only
+  the diagram case, changes segmentation (stream B's area) and cannot help shapes overlapping other shapes. Not pursued.
+- **(c) Arc/line fitting of open chains + chain merging by G1 continuity at junctions**: recovers partially occluded
+  circles too, but the junction vertices stay (polygon vertex count wrong), and arcs of the same circle fitted per chain
+  disagree slightly → no single primitive. Not pursued (occluded shapes are also not GT primitives).
+- **Robust model refinement**: bbox / convex-hull initialisation of rects is pulled by single outlying samples (junction
+  bumps, JPEG specks). Alternatives: RANSAC on the four sides (needs side assignment, unstable for rounded corners),
+  trimmed least squares, **soft-L1 IRLS Gauss–Newton on the signed distance (chosen; 2–3 ms per fit)**. scipy
+  `least_squares` gave the same results but was 4× slower (finite-difference overhead).
+- **Polygon / star model**: corners at a permissive angle (25°, regular octagons turn 45°), collinear-run merging
+  (staircase noise), then greedy vertex removal while the robust error stays ≤ prim_tol and grows ≤ 0.1 px
+  (an MDL-style model-order selection), vertices = TLS line intersections. A Douglas–Peucker-first variant needs a
+  tolerance that is wrong either for blurred star tips or for noisy edges.
+- **Sharp vs rounded corners under blur**: the iso-contour of a blurred sharp corner is rounded (apparent r ≈ 1.9σ), so the
+  fitted radius alone is biased. Tried (1) **mass-preserving radius from anti-aliased coverage** (blur-invariant in theory:
+  r² = (corner deficit − 2Lk + k²)/(1 − π/4)): too noisy on real inputs (±2 px at r = 0 even on clean images, 3rd colours in
+  the window) → rejected; (2) radius correction r² − (cσ)²: hurts true small radii; (3) **scale-aware model selection
+  (chosen)**: measure the edge spread σ of the same rectangle (erf fit to the unmixed coverage profile across its sides) and
+  prefer the sharp model when r_fit < 3.8σ and the sharp model is acceptable (3.8 ≈ 2 × 1.9σ; dev: separates 5/5 blurred
+  sharp boxes from all but one real r = 2.5 px corner).
+
+### Corners
+The official corner error is measured from the nominal GT vertex; the Harris peak of a perfect corner is 0.4–1.15 px away
+from it (GT-vs-GT floor), so the metric cannot reach 0.5 px. Alternatives for real corner accuracy: sub-pixel corner
+localisation from intensities (Förstner), line–line intersection (already used: TLS lines + intersection), primitive
+snapping (exact corners for rect/polygon outlines, chosen as a by-product of A-3). Proposed metric fix in HANDOFF_A.md.
+
+### Geometry validity
+Self-intersections in our output have four causes (EXPERIMENTS A-4): float noise of relative path coordinates at the closing
+point (metric false positives, ~45 %), zero-area loops of tiny regions, lattice pinch vertices, and genuine curve
+crossings near junctions. Alternatives: constrained Bézier fitting (control points inside the chain's lattice corridor:
+needs a QP per segment), crossing detection + local refit (chosen: polylines through the sub-pixel samples, then raw
+crack midpoints, whose ring is simple by construction), clipping the output with a polygon boolean library (shapely
+`make_valid`/buffer(0): changes topology and breaks shared borders). Pinch vertices are split into separate rings.

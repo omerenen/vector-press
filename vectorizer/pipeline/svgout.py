@@ -31,7 +31,7 @@ def _join(tokens):
     return "".join(out)
 
 
-def geom_to_tokens(geom, prec, move=True, rel=True):
+def geom_to_tokens(geom, prec, move=True, rel=True, close=False):
     """Tokens for a geometry dict; relative commands for compactness."""
     toks = []
     x0, y0 = geom["start"]
@@ -44,8 +44,17 @@ def geom_to_tokens(geom, prec, move=True, rel=True):
     if move:
         toks += ["M", fmt(cx, prec), fmt(cy, prec)]
     last_cmd = None
-    for s in geom["segs"]:
+    segs = geom["segs"]
+    if close and segs and segs[-1][0] == "L":
+        segs = segs[:-1]                 # the closing line is drawn by "z"
+        close = False
+    nseg = len(segs)
+    for si, s in enumerate(segs):
         k = s[0]
+        if close and si == nseg - 1:
+            # last segment of a closed loop in absolute coordinates: its end point parses to exactly the
+            # start point (relative offsets accumulate float noise -> spurious "self-intersections")
+            rel = False
         ex, ey = r(s[-1][0]), r(s[-1][1])
         if k == "L":
             dx, dy = ex - cx, ey - cy
@@ -86,10 +95,10 @@ def geom_to_tokens(geom, prec, move=True, rel=True):
     return toks
 
 
-def loop_d(geoms, prec):
+def loop_d(geoms, prec, exact_close=False):
     toks = []
     for i, g in enumerate(geoms):
-        toks += geom_to_tokens(g, prec, move=(i == 0))
+        toks += geom_to_tokens(g, prec, move=(i == 0), close=exact_close and i == len(geoms) - 1)
     toks.append("z")
     return toks
 

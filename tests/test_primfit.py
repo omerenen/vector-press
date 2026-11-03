@@ -140,3 +140,76 @@ def test_robust_rect_refine_ignores_bump():
     assert r is not None
     q = r.get("sharp", r)
     assert abs(q["cy"] - 35.0) < 0.15 and abs(q["h"] - 30.0) < 0.3
+
+
+# ------------------------------------------------------------------ geometry validity
+
+def test_split_pinches_separates_diagonal_touch():
+    from vectorizer.pipeline.validity import split_pinches
+    # region 1 = two squares touching at one lattice vertex (diagonal), surrounded by 0 and 2
+    lbl = np.zeros((40, 40), np.int32)
+    lbl[5:25, 5:25] = 1                  # thick ring with a hole that touches the outside at one vertex
+    lbl[12:18, 12:18] = 0
+    lbl[18:25, 18:25] = 0
+    lbl[18:25, 18:25] = 2
+    lbl[12:18, 12:18] = 3
+    lbl[25:30, 25:30] = 2
+    R, rl = label_regions(lbl)
+    chains = build_graph(R)
+    regions = assemble_regions(chains, rl, R)
+    for c in chains:
+        fit_chain(c, {})
+    # 4-connected components: the two squares of label 1 are separate regions -> no pinch; label 0's ring
+    # around both touches itself only if the squares touch diagonally -> check every loop splits into simple rings
+    from vectorizer.pipeline.validity import _ring_ok, flatten_geom
+    for r in regions:
+        for lp in r.loops:
+            for sub in split_pinches(lp, chains):
+                P = np.vstack([(flatten_geom(reverse_geom(chains[c].geom)) if rev else flatten_geom(chains[c].geom))[:-1]
+                               for c, rev in sub])
+                assert _ring_ok(P)
+
+
+def test_repair_loops_fixes_crossing_chain():
+    from vectorizer.pipeline.boundary import Chain
+    from vectorizer.pipeline.validity import _ring_ok, flatten_geom, repair_loops
+    # two chains forming a loop between junctions (0,0) and (10,0); chain B's curve crosses chain A
+    a = Chain(np.array([[0, 0], [5, 0], [10, 0]], float), 0, 1, False)
+    b = Chain(np.array([[10, 0], [10, 3], [5, 3], [0, 3], [0, 0]], float), 0, 1, False)
+    a.geom = {"start": (0.0, 0.0), "segs": [("L", (10.0, 0.0))]}
+    b.geom = {"start": (10.0, 0.0), "segs": [("C", (10.0, 9.0), (0.0, -9.0), (0.0, 0.0))]}   # S-curve crossing y=0
+    a.samples = np.array([[0, 0], [2.5, 0], [7.5, 0], [10, 0]], float)
+    b.samples = np.array([[10, 0], [10, 1.5], [7.5, 3], [2.5, 3], [0, 1.5], [0, 0]], float)
+    loop = [(0, False), (1, False)]
+    chains = [a, b]
+    P = np.vstack([flatten_geom(a.geom)[:-1], flatten_geom(b.geom)[:-1]])
+    assert not _ring_ok(P)
+    st, rings = repair_loops([loop], chains)
+    assert st["invalid_loops"] == 1 and st["unrepaired"] == 0
+    P = np.vstack([flatten_geom(a.geom)[:-1], flatten_geom(b.geom)[:-1]])
+    assert _ring_ok(P)
+    assert tuple(b.geom["start"]) == (10.0, 0.0) and tuple(b.geom["segs"][-1][-1]) == (0.0, 0.0)
+
+
+def test_line_pair_corner_survives_blur():
+    from vectorizer.pipeline.fit import line_pair_corners
+    # L-shaped polyline with a rounded (blurred) 90-degree corner of radius 2 at (20, 20)
+    pts = [(x, 20.0) for x in np.arange(0.5, 18.0, 1.0)]
+    for t in np.linspace(0, math.pi / 2, 5)[1:-1]:
+        pts.append((18.0 + 2 * math.sin(t), 22.0 - 2 * math.cos(t)))
+    pts += [(20.0, y) for y in np.arange(22.0, 40.0, 1.0)]
+    P = np.array(pts)
+    turn, X = line_pair_corners(P, False, a=2.5, A=8.0)
+    i = int(np.argmax(turn))
+    assert math.degrees(turn[i]) > 80
+    assert math.hypot(*(X[i] - (20.0, 20.0))) < 0.2
+
+
+def test_svg_closing_point_exact():
+    from vectorizer.pipeline.svgout import loop_d
+    g = {"start": (1.0, 2.0), "segs": [("L", (5.0, 2.0)), ("C", (6, 3), (4, 7), (1.0, 2.0))]}
+    toks = loop_d([g], 2, exact_close=True)
+    assert toks[-8:] == ["C", "6", "3", "4", "7", "1", "2", "z"]
+    g = {"start": (1.0, 2.0), "segs": [("L", (5.0, 2.0)), ("L", (5.0, 6.0)), ("L", (1.0, 2.0))]}
+    toks = loop_d([g], 2, exact_close=True)
+    assert toks[-1] == "z" and "1" not in toks[-3:-1]

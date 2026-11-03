@@ -63,7 +63,8 @@ def turning(P, closed, L):
     return t
 
 
-def detect_corners(P, closed, angle_deg=55.0, k=3.0, ratio=0.72):
+def detect_corners(P, closed, angle_deg=55.0, k=3.0, ratio=0.72, extra=None):
+    """extra: optional per-sample corner strength (radians, 0 = none) from line_pair_corners."""
     n = len(P)
     if n < 5:
         return []
@@ -71,6 +72,9 @@ def detect_corners(P, closed, angle_deg=55.0, k=3.0, ratio=0.72):
     t2 = turning(P, closed, 2 * k)
     thr = math.radians(angle_deg)
     cand = (t1 > thr) & (t1 >= ratio * t2)
+    if extra is not None:
+        cand |= extra > 0
+        t1 = np.maximum(t1, extra)
     if not cand.any():
         return []
     idx = np.nonzero(cand)[0]
@@ -92,6 +96,64 @@ def detect_corners(P, closed, angle_deg=55.0, k=3.0, ratio=0.72):
     if not closed:
         taken = [i for i in taken if 0 < i < n - 1]
     return sorted(taken)
+
+
+def line_pair_corners(P, closed, a=2.0, A=8.0, max_rms=0.25, min_turn_deg=25.0):
+    """Blur-robust corner evidence: straight arms on both sides of a sample (TLS lines over arclength
+    [a, A] before and after it, the blurred zone |s| < a ignored) that meet at a real angle close to it.
+
+    Returns (turn angle in radians, 0 where no corner) per sample and the line intersection points."""
+    n = len(P)
+    turn = np.zeros(n)
+    X = P.copy()
+    if n < 8:
+        return turn, X
+    s, total = _arclen(P, closed)
+    if closed:
+        Pe = np.vstack([P, P, P])
+        se = np.concatenate([s - total, s, s + total])
+        off = n
+    else:
+        Pe, se, off = P, s, 0
+    x, y = Pe[:, 0], Pe[:, 1]
+    cs = [np.concatenate([[0.0], np.cumsum(v)]) for v in (np.ones_like(x), x, y, x * x, y * y, x * y)]
+    si = s
+
+    def arm(lo, hi):
+        i0 = np.searchsorted(se, lo, side="left")
+        i1 = np.searchsorted(se, hi, side="right")
+        m = [c[i1] - c[i0] for c in cs]
+        cnt = np.maximum(m[0], 1)
+        mx, my = m[1] / cnt, m[2] / cnt
+        cxx = m[3] / cnt - mx * mx
+        cyy = m[4] / cnt - my * my
+        cxy = m[5] / cnt - mx * my
+        tr, det = cxx + cyy, cxx * cyy - cxy * cxy
+        disc = np.sqrt(np.maximum(tr * tr / 4 - det, 0))
+        lmin = np.maximum(tr / 2 - disc, 0)
+        th = 0.5 * np.arctan2(2 * cxy, cxx - cyy)
+        return m[0], mx, my, np.sqrt(lmin), np.cos(th), np.sin(th)
+    nL, mxL, myL, rL, dxL, dyL = arm(si - A, si - a)
+    nR, mxR, myR, rR, dxR, dyR = arm(si + a, si + A)
+    ok = (nL >= 4) & (nR >= 4) & (rL <= max_rms) & (rR <= max_rms)
+    if not closed:
+        ok &= (si - A >= 0) & (si + A <= total)
+    # orient: left direction points towards the sample, right direction away from it
+    sL = np.sign((P[:, 0] - mxL) * dxL + (P[:, 1] - myL) * dyL)
+    sR = np.sign((mxR - P[:, 0]) * dxR + (myR - P[:, 1]) * dyR)
+    dxL, dyL, dxR, dyR = dxL * sL, dyL * sL, dxR * sR, dyR * sR
+    cosang = np.clip(dxL * dxR + dyL * dyR, -1, 1)
+    ang = np.arccos(cosang)
+    ok &= ang >= math.radians(min_turn_deg)
+    den = dxL * dyR - dyL * dxR
+    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+        t = ((mxR - mxL) * dyR - (myR - myL) * dxR) / den
+        Xx, Xy = mxL + t * dxL, myL + t * dyL
+        dist = np.hypot(Xx - P[:, 0], Xy - P[:, 1])
+    ok &= np.isfinite(dist) & (dist <= a + 1.0)
+    turn[ok] = ang[ok]
+    X[ok, 0], X[ok, 1] = Xx[ok], Xy[ok]
+    return turn, X
 
 
 # ------------------------------------------------------------------ bezier fitting
@@ -220,19 +282,22 @@ def _smooth(P, sigma, closed):
     return Q
 
 
-def fit_piece(P, tol, line_tol, smooth_sigma, t_start=None, t_end=None, line_tls=0.45, sagitta_tol=0.25):
-    """Fit samples between two break points. Returns list of segments (without start point)."""
+def fit_piece(P, tol, line_tol, smooth_sigma, t_start=None, t_end=None, line_tls=0.45, sagitta_tol=0.25, trim=(0, 0)):
+    """Fit samples between two break points. Returns list of segments (without start point).
+
+    trim: samples to ignore at the start / end in the straight-line test (blurred corner zones)."""
     a, b = P[0], P[-1]
     if len(P) <= 3 or _point_line_dist(P, a, b).max() <= line_tol:
         return [("L", tuple(b))]
-    if line_tls and line_tls > 0 and len(P) >= 6:
+    t0, t1 = max(1, trim[0]), max(1, trim[1])
+    if line_tls and line_tls > 0 and len(P) >= 6 + (t0 - 1) + (t1 - 1):
         # total-least-squares line through the interior (end samples may sit off a true corner)
-        c, d = _line_fit(P[1:-1])
+        c, d = _line_fit(P[t0:len(P) - t1])
         v = (P[:, 0] - c[0]) * d[1] - (P[:, 1] - c[1]) * d[0]
         res = np.abs(v)
-        if res[1:-1].max() <= line_tls and res.max() <= 2 * line_tls:
+        if res[t0:len(P) - t1].max() <= line_tls and res.max() <= 2 * line_tls + (0.5 if (trim[0] or trim[1]) else 0.0):
             return [("L", tuple(b))]
-        if sagitta_tol > 0 and res[1:-1].max() <= line_tls + 0.2 and res.max() <= 2 * line_tls + 0.2:
+        if sagitta_tol > 0 and res[t0:len(P) - t1].max() <= line_tls + 0.2 and res.max() <= 2 * line_tls + 0.2:
             # staircase noise vs real curvature: sagitta of a parabola fitted along the line
             u = (P[:, 0] - c[0]) * d[0] + (P[:, 1] - c[1]) * d[1]
             half = 0.5 * (u.max() - u.min())
@@ -558,10 +623,15 @@ def choose_closed_primitive(S, opts):
         prim = {"type": "circle", "cx": m["cx"], "cy": m["cy"], "r": r}
         return prim, ellipse_geom((m["cx"], m["cy"], r, r, 0.0), cw), err
     rr = dict(m)
+    alt = rr.pop("sharp", None)
     if kind == "rect0":
-        rr.update(rr.pop("sharp", {}))
+        rr.update(alt or {})
         rr["r"] = 0.0
-    rr.pop("sharp", None)
+    elif rr["err0"] <= ptol + 0.3:
+        # keep the sharp alternative: a blur-aware decision (primfit.sharpen_blurred_rect) may prefer it
+        a = dict(alt) if alt else {k: rr[k] for k in ("cx", "cy", "w", "h", "angle")}
+        a["err"] = rr["err0"]
+        rr["alt_sharp"] = a
     if abs(rr["angle"]) < 0.75:
         rr["angle"] = 0.0
     if rr["r"] < 0.75:
@@ -784,7 +854,12 @@ def fit_chain(chain, opts, ctx=None):
     k = opts.get("corner_scale", 3.0)
     if closed:
         k = min(k, max(1.0, _arclen(S, True)[1] / 16.0))
-    corners = detect_corners(S, closed, opts.get("corner_angle", 55.0), k)
+    lp = None
+    if opts.get("corner_lines", False) and n >= 12:
+        lp_turn, lp_X = line_pair_corners(S, closed, a=opts.get("corner_blur_zone", 2.0))
+        lp = lp_turn
+    corners = detect_corners(S, closed, opts.get("corner_angle", 55.0), k, extra=lp)
+    blurred = set(c for c in corners if lp is not None and lp[c] > 0)
     if closed:
         if not corners:
             # split smooth loop in 2 with G1 tangents
@@ -799,13 +874,20 @@ def fit_chain(chain, opts, ctx=None):
             return
         r = corners[0]
         S = np.vstack([S[r:], S[:r], S[r:r + 1]])
+        blurred = {(c - r) % n for c in blurred} | ({n} if 0 in {(c - r) % n for c in blurred} else set())
         corners = sorted((c - r) % n for c in corners) + [n]
     else:
         corners = [0] + corners + [n - 1]
     pieces = []
+    bz = int(math.ceil(opts.get("corner_blur_zone", 2.0)))
+    trims = []
     for a_, b_ in zip(corners[:-1], corners[1:]):
         P = S[a_:b_ + 1]
-        pieces.append(fit_piece(P, tol, line_tol, sig, line_tls=opts.get("line_tls", 0.45), sagitta_tol=opts.get("sagitta_tol", 0.25)))
+        t0 = bz if a_ in blurred else 0
+        t1_ = bz if b_ in blurred else 0
+        trims.append((t0, t1_))
+        pieces.append(fit_piece(P, tol, line_tol, sig, line_tls=opts.get("line_tls", 0.45),
+                                sagitta_tol=opts.get("sagitta_tol", 0.25), trim=(t0, t1_)))
     # corner refinement: intersect adjacent straight pieces
     vertices = [S[c].copy() for c in corners]
     if opts.get("refine_corners", True):
@@ -818,10 +900,12 @@ def fit_chain(chain, opts, ctx=None):
                 jb = j % nseg
                 B = S[corners[jb]:corners[jb + 1] + 1]
                 if len(A) >= 4 and len(B) >= 4:
-                    ca, da = _line_fit(A[1:-1] if len(A) > 4 else A)
-                    cb, db = _line_fit(B[1:-1] if len(B) > 4 else B)
+                    ta, tb = max(1, trims[j - 1][1]), max(1, trims[jb][0])
+                    ca, da = _line_fit(A[1:len(A) - ta] if len(A) > 3 + ta else A)
+                    cb, db = _line_fit(B[tb:-1] if len(B) > 3 + tb else B)
                     X = _intersect(ca, da, cb, db)
-                    if X is not None and math.hypot(*(X - S[corners[j]])) < 1.5:
+                    lim = 1.5 + (1.0 if (trims[j - 1][1] or trims[jb][0]) else 0.0)
+                    if X is not None and math.hypot(*(X - S[corners[j]])) < lim:
                         vertices[j] = X
                         if closed and j == nseg:
                             vertices[0] = X

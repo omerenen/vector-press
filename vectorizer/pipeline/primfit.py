@@ -22,7 +22,8 @@ import math
 
 import numpy as np
 
-from .fit import (_is_cw, _line_fit, _arclen, choose_closed_primitive, detect_corners, reverse_geom, robust_err)
+from .fit import (_arclen, _is_cw, _line_fit, choose_closed_primitive, detect_corners, reverse_geom, robust_err,
+                  rrect_geom)
 
 
 # ------------------------------------------------------------------ outline model
@@ -395,7 +396,30 @@ def _move_end(g, at_start, newp):
     return {"start": g["start"], "segs": segs}
 
 
-def snap_region_primitives(regions, chains, opts, drawn, shape=None):
+def sharpen_blurred_rect(prim, rid, ctx, opts):
+    """Sharp vs rounded corners in the presence of blur (scale-aware model selection).
+
+    The iso-contour of a blurred *sharp* corner is rounded with radius ~1.9 sigma, so a small fitted
+    radius is no evidence of a rounded design corner. If the fitted radius is below
+    `blur_sharp_ratio` x the measured edge spread of the same rectangle and the sharp model is
+    acceptable, the sharp rectangle is returned instead."""
+    ratio = opts.get("blur_sharp_ratio", 0.0)
+    alt = prim.get("alt_sharp")
+    if not ratio or prim.get("type") != "rect" or prim.get("r", 0.0) <= 0 or alt is None or ctx is None:
+        return prim
+    if alt.get("err", 1e9) > opts.get("prim_tol", 0.75) + 0.15:
+        return prim
+    sg = edge_blur_sigma(prim, rid, ctx)
+    if sg is None or prim["r"] >= ratio * sg[0]:
+        return prim
+    q = {"type": "rect", **{k: alt[k] for k in ("cx", "cy", "w", "h", "angle")}, "r": 0.0, "err": alt["err"],
+         "err0": alt["err"]}
+    if abs(q["angle"]) < 0.75:
+        q["angle"] = 0.0
+    return q
+
+
+def snap_region_primitives(regions, chains, opts, drawn, shape=None, ctx=None):
     """Detect primitives on multi-chain outer loops and snap the loop's chains to them.
 
     Returns {region id: prim dict}. Chains of accepted loops get .snapped=True and new geometry;
@@ -417,6 +441,13 @@ def snap_region_primitives(regions, chains, opts, drawn, shape=None):
         loop = r.loops[r.outer]
         if len(loop) == 1:
             c = chains[loop[0][0]]
+            if c.prim is not None and c.prim.get("type") == "rect" and c.prim.get("r", 0) > 0 and ctx is not None:
+                q = sharpen_blurred_rect(c.prim, r.rid, ctx, opts)
+                if q is not c.prim:
+                    g = rrect_geom(q)
+                    c.geom = g if _is_cw(c.samples) else reverse_geom(g)
+                    c.prim = q
+                continue
             if c.prim is not None or not opts.get("prim_polygons", True) or c.samples is None or len(c.samples) < 12:
                 continue
             if c.snapped:
@@ -443,6 +474,8 @@ def snap_region_primitives(regions, chains, opts, drawn, shape=None):
         if res is None:
             continue
         prim, err = res
+        if ctx is not None:
+            prim = sharpen_blurred_rect(prim, r.rid, ctx, opts)
         ol = outline_from_prim(prim)
         # junction vertices of the loop (start of every chain in loop orientation)
         verts = []

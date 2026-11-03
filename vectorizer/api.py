@@ -31,6 +31,10 @@ DEFAULTS = dict(
     prim_tol=0.75,           # primitive acceptance error (px, robust)
     region_prims=False,      # phase 2 A: fit primitives to whole region outlines split by junctions, snap chains
     rect_refine=False,       # phase 2 A: robust least-squares refinement of rect / rounded-rect fits
+    blur_sharp_ratio=0.0,    # phase 2 A: fitted corner radius < ratio x measured edge blur -> sharp rect (0 = off)
+    geom_repair=False,       # phase 2 A: split pinched loops, refit self-crossing / zero-area loops as polylines
+    corner_lines=False,      # phase 2 A: blur-robust corners from straight arm pairs (line-line intersection)
+    corner_blur_zone=2.0,    # corner_lines: arclength (px) around a corner ignored as blurred
     prim_polygons=True,      # region_prims: also straight-edged polygons (emitted without junction vertices)
     poly_corner_angle=25.0,  # region_prims: permissive corner angle for polygon vertices (deg)
     region_prim_min_len=24,  # region_prims: minimum loop length (samples)
