@@ -217,3 +217,4 @@ tuned VTracer 0.833 → final 0.919.
 (output: exact `<rect>` + `<circle>`). Nothing depends on files outside the repository (datasets are rebuilt by `python -m data.build`).
 
 Fresh-clone test re-run on the final commit 6f3dd9e: 47 passed; `python -m vectorizer` and batch `vectorize in -o out --stats` OK.
+| best-v4 | 9c82f5b | dev 0.904 / test 0.901 | final: review fixes (fallback, alpha, max mode, licences) |
