@@ -256,7 +256,7 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
             popts = preset_options("photo")
             opts["engine"] = "vtracer_raw"
             opts["vtracer_params"] = dict(popts["vtracer_params"])
-            if qinfo["n_regions"] > 0.1 * H * W:      # pure noise: bound the output size
+            if qinfo.get("pure_noise", qinfo["n_regions"] > 0.1 * H * W):   # pure noise: bound the output size
                 opts["vtracer_params"].update(filter_speckle=8, color_precision=6, layer_difference=24)
             if max(H, W) > popts["max_side"]:
                 sc = popts["max_side"] / max(H, W)

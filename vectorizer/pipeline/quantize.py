@@ -580,7 +580,8 @@ def _quantize_ms(lab, valid, flat, pal, lbl, noise, stats, thin_lines, slivers, 
         if bail_density and n_raw > raw_bail * H * W:
             # very fragmented raw assignment (photographic texture): photo engine, skip the clean-up
             return lbl, oklab_to_rgb8(pal), pal, {"noise": noise, "n_colors": len(pal), "min_area": 0,
-                                                  "n_regions": int(n_raw), "bailed": True}, lab
+                                                  "n_regions": int(n_raw), "bailed": True,
+                                                  "pure_noise": bool(n_raw > 0.25 * H * W)}, lab
         if not (bail_density and n_raw > 0.25 * H * W):
             # phase-1 clean-up first (AA fragments / speckles of flat art), MS then merges what it could not
             lbl = merge_small_regions(lbl, pal, premerge_area)
@@ -593,7 +594,8 @@ def _quantize_ms(lab, valid, flat, pal, lbl, noise, stats, thin_lines, slivers, 
                 n_p1 = len(_rl)
                 if n_p1 > 300 and n_p1 > bail_density / 4.0 * H * W:
                     return lbl, oklab_to_rgb8(pal), pal, {"noise": noise, "n_colors": len(pal), "min_area": premerge_area,
-                                                          "n_regions": int(n_p1), "bailed": True}, lab
+                                                          "n_regions": int(n_p1), "bailed": True,
+                                                          "pure_noise": bool(n_raw > 0.25 * H * W)}, lab
     lpal = lbl
     if seg_init == "fz":
         # graph-based over-segmentation of the raw colours (Felzenszwalb & Huttenlocher 2004) instead of palette

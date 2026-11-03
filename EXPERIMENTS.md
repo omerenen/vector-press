@@ -357,3 +357,46 @@ no longer routed to the photo engine because MS produces far fewer regions than 
   Per image, region output beats the VTracer photo engine up to 2.5 regions/1000 px (0012) and loses from 3.5 (0003 fur:
   0.566 vs 0.720; 0048: 0.598 vs 0.673) → `seg_max_density` (density threshold used when segment="ms"), simulated 0.003:
   0.7293 on tdev_small.
+
+### B-4 Routing with the ms engine (preset auto)
+Region density after MS is a poor texture detector (MS merges smooth photos into few regions: dev_0123 photo 403 regions
+→ region output 0.656 vs VTracer 0.765; tdev_0003 fur 3.5/1000 px). Measured per image on tdev_small + dev_small:
+the phase-1 post-clean-up count (`merge_small_regions`+slivers, computed anyway by `seg_premerge`) and the raw palette
+fragment count separate the cases: region output wins for 0051 (raw 48 / p1 0.9 per 1000 px), 0012 (51 / 6.7), 0021,
+0033, 0042, 0006; the photo engine wins for 0003 (69 / 11.3), 0048 (107 / 15.6), dev_0123 (69 / 4.4), 0039/0045/0024/0000
+(>130 / >26). Rule (auto only): photo engine if p1 > `max_region_density` (0.008, unchanged) or raw > `seg_raw_bail`
+(0.06; phase 1 bailed at 0.032 raw, which sent 0051/0012 to VTracer). Thresholds rest on few images → lead/stream C
+should re-check them on the full set (HANDOFF).
+| run (tdev_small) | composite | SSIM | ΔE | edge-F | LPIPS |
+|---|---|---|---|---|---|
+| phase2-base | 0.689 | 0.788 | 3.60 | 0.864 | 0.182 |
+| ms + premerge, density 0.008 | 0.718 | 0.819 | 3.23 | 0.884 | 0.163 |
+| **ms + premerge + routing (default now)** | **0.729** | **0.829** | **3.13** | **0.904** | **0.157** |
+dev_small with the defaults: 0.9067 vs 0.9061; every category ≥ base (photo identical, gradient edge-F −0.004, ΔE ±0.01).
+
+### B-5 Gradients (work item 6): piecewise-affine MS + per-region linear gradients (`seg_model="affine"`)
+Root cause on the dev gradient category (dev_0068 edge-F 0.41, dev_0061, dev_0066, Fluent-emoji style art): soft
+shading and *blurred* features are cut into flat bands; every band border is a hard edge that the input does not have
+(Canny precision drops), and smooth ramps inside one object are not linear/radial over the whole soft group, so the
+soft-group fitter (phase 1) rejects them. Approach: MS with an affine colour model per region (ridge-regularised
+slopes, batched 3×3 solves), then every region whose affine fit removes more squared error than the price of ~60 px of
+boundary gets a `linearGradient` along its dominant colour-change direction (2–3 stops, sRGB interpolation corrected
+by a mid stop when needed); the phase-1 soft-group gradients still run first.
+- Raster screening tdev_0030 (poster with bokeh): fid 0.739 → 0.760 at −18 % boundary; pipeline: −22 % bytes, GMSD
+  0.112 → 0.094, contour banding gone (visual).
+- dev_small: gradient edge-F 0.8638 → **0.8754** (+0.012), but PSNR −0.9 dB / ΔE +0.07 on gradient and ΔE +0.07 on
+  logo (AA rings give flat regions a small slope), composite gradient 0.8734 vs 0.8742 (const) → mixed.
+- tdev_small (region-engine images only): +0.002..+0.004 on 0012/0033/0042, −0.005 on 0003; affine also changes region
+  counts (routing) and costs ~0.3 s/MP (moment accumulation) → **kept as an option, default "const"**.
+Soft (blurred) boundaries themselves would need blur filters or mesh gradients (resvg: no mesh) – open problem.
+
+### B-6 Speed of quantize (work item 7), cProfile ratios on the same machine/run (12 dev items rendered at 1024 px)
+Changes with identical output (verified: label maps equal on 30 dev runs except float-rounding flips in ≤0.1 % px of
+2 images; dev_small composite 0.9061 = phase2-base): symmetric sigma filter (4 instead of 8 neighbour distances, channel
+planes – 3× faster), `_dir_stats` from one neighbour-distance plane per direction (2.4×), dense-histogram palette binning
+instead of `np.unique` sort, one-sort per-label medians instead of K full-image masks, uint8 OKLab LUT, low-alpha pass
+skipped on opaque input, MS region stats on channel planes. Same 8 images, same process: quantize 12.5 s → 6.5 s
+(−48 %); share of quantize in the whole pipeline 0.511 → 0.385 (palette engine). The default ms engine (premerge + MS)
+costs +12 % over that on flat art (quantize/fit ratio 0.80 → 0.98, base 1.36): estimated median ≈ 1.6–1.7 s at 1024 px
+from the phase-1 stage medians (quantize 1.18→~0.85 s, fit unchanged 0.6 s) → the ≤1.2 s target needs fit-stage work
+(stream A) too; real timing by the lead.
