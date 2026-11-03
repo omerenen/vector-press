@@ -152,10 +152,12 @@ def edge_only_mask(lbl, pal, near=0.09, interior_max=0.05, max_area_frac=0.05):
     return out
 
 
-def clean_fringe(lbl, lab, pal, method="halo", near=0.09, passes=2):
-    """Return (labels, n_pixels_reassigned). `pal` is the OKLab palette; unused colours are left in the palette."""
+def clean_fringe(lbl, lab, pal, method="halo", near=0.09, passes=2, min_area=3):
+    """Return (labels, n_pixels_reassigned). `pal` is the OKLab palette; unused colours are left in the palette.
+    Specks (< min_area px) left by the per-pixel re-assignment are merged afterwards (same rule as quantisation)."""
     if not method:
         return lbl, 0
+    lbl0 = lbl
     total = 0
     for _ in range(passes):
         if method == "halo":
@@ -174,4 +176,8 @@ def clean_fringe(lbl, lab, pal, method="halo", near=0.09, passes=2):
         total += changed
         if changed == 0:
             break
+    if total and min_area > 1:
+        from .quantize import merge_small_regions
+        lbl = merge_small_regions(lbl, np.asarray(pal, np.float32), min_area)
+        total = int((lbl != lbl0).sum())
     return lbl, total

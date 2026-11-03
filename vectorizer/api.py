@@ -36,6 +36,10 @@ DEFAULTS = dict(
     upscale_scaled=("corner_scale", "seam_width"),  # px-unit options rescaled when upscaling
     upscale_max_side=3072,   # max mode never processes more than this many px on the long side
     max_region_density=0.008,  # preset="auto": >8 regions per 1000 px (dev: flat art <= 5.7, photos 18-26) -> photo engine
+    photo_route="features",  # preset="auto": "features" = classifier "photo" goes straight to the photo engine;
+                             # "try" = it goes to the gradient preset and reaches the photo engine only through the
+                             # region-explosion fallback (JPEG'd flat art is often classified as photo)
+    noise_density=0.1,       # fallback: more regions than this per px (counted before clean-up) = pure noise -> coarse VTracer
     photo_fallback=None,     # region-explosion fallback to the photo engine: None = only with preset "auto", True/False force
     low_alpha=24,
     cutout=False,            # cut-file geometry: real holes, no stacking overlaps, no seams, one path per colour
@@ -170,6 +174,8 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
         timings["classify"] = time.perf_counter() - t
         stats["image_type"] = itype
         preset = TYPE_TO_PRESET[itype]
+        if preset == "photo" and options.get("photo_route", DEFAULTS["photo_route"]) == "try":
+            preset = "gradient"
     opts.update(preset_options(preset))
     if intent:
         if preset in ("photo",):             # photos: posterize through the region engine for cut/print intents
@@ -228,7 +234,8 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
             from .pipeline.fringe import clean_fringe
             from .pipeline.boundary import label_regions
             t = time.perf_counter()
-            lbl, nfr = clean_fringe(lbl, lab, pal_lab, method=opts["fringe"], near=opts["fringe_near"])
+            lbl, nfr = clean_fringe(lbl, lab, pal_lab, method=opts["fringe"], near=opts["fringe_near"],
+                                    min_area=max(2, int(qinfo.get("min_area") or 3)))
             if nfr:
                 used = np.unique(lbl[lbl >= 0])
                 remap = np.full(len(pal_lab), -1, np.int32)
@@ -260,7 +267,7 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
             popts = preset_options("photo")
             opts["engine"] = "vtracer_raw"
             opts["vtracer_params"] = dict(popts["vtracer_params"])
-            if qinfo["n_regions"] > 0.1 * H * W:      # pure noise: bound the output size
+            if qinfo["n_regions"] > opts["noise_density"] * H * W:      # pure noise: bound the output size
                 opts["vtracer_params"].update(filter_speckle=8, color_precision=6, layer_difference=24)
             if max(H, W) > popts["max_side"]:
                 sc = popts["max_side"] / max(H, W)

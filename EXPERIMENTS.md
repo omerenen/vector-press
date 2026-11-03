@@ -308,3 +308,40 @@ test_0013 and test_0048 — allowed only for diagnosis; the failure classes were
   reaches the region engine. With preset logo/gradient the region engine scores 0.895 / 0.905 (9 KB instead of 134 KB).
   Failure class: compressed/noisy flat art classified as photo from colour-count features. On dev: dev logo→photo (1),
   gradient→photo (1). Fix belongs to the classifier work (C-5).
+
+### C-8b Fringe clean-up (new module `vectorizer/pipeline/fringe.py`, option `fringe`)
+Three approaches considered (RESEARCH.md stream C): (1) component-level *halo* model, (2) palette-level *edge-only
+colour* model, (3) pre-quantisation edge restoration (shock filter) — rejected without prototype because it destroys
+the AA coverage the sub-pixel boundary placement (exp_011) relies on; widening the sliver mixture test (quantize.py,
+stream B) cannot catch the double fringe (each band's main neighbour is the other band, measured above).
+First halo version marked both members of a pair of near-coloured thin components → erased thin dark connector
+lines in diagrams (dev_0114 −0.054). Fixed by requiring the near partner to be a non-thin component.
+Targeted dev items (14 items with the most near-colour thin components), composite base → halo / colour:
+| item | cat (deg) | preset | base | halo | colour |
+|---|---|---|---|---|---|
+| dev_0028 | logo (jpeg) | icon | 0.900 | **0.961** | 0.963 |
+| dev_0005 | icon (noise) | icon | 0.935 | **0.974** | 0.974 |
+| dev_0075 | gradient (colorshift) | icon | 0.835 | **0.853** | 0.853 |
+| dev_0023 | logo (rescale) | logo | 0.779 | **0.787** | 0.779 |
+| dev_0097 | line_art (jpeg) | line_art | 0.761 | 0.722 | 0.598 |
+| dev_0092 | line_art (jpeg) | line_art | 0.876 | 0.845 | 0.788 |
+| dev_0089 | line_art (colorshift) | line_art | 0.778 | 0.766 | 0.540 |
+| dev_0118 | diagram (jpeg) | line_art | 0.859 | 0.832 | 0.783 |
+| dev_0065 | gradient (jpeg) | gradient | 0.856 | 0.848 | — |
+On line art the thin bands ARE the content (JPEG splits a stroke into a dark core and a lighter edge colour), so the
+clean-up is only applied to the flat presets: `fringe="auto"` = halo for icon/logo/flat_illustration, off for line_art /
+diagram / gradient / photo. Halo is kept over colour (equal on flat items, more local, much less destructive when misapplied).
+(test_0013 diagnosis item: 156 → 7 regions, 18.3 KB → 1.7 KB SVG.)
+
+### C-9 Fast vs max (dev_small, categories with max mode; composite Δ vs fast base, gz bytes Δ)
+| variant | icon | logo | flat_ill | line_art | diagram | bytes | prim_recovery |
+|---|---|---|---|---|---|---|---|
+| max (2× bicubic, corner arm ×2) | +0.006 | +0.003 | +0.001 | +0.007 | **+0.023** | +93…+193 % | −0.21…−0.25 |
+| tight fit at 1× (fit_tol 0.3, line_tol 0.33) | +0.006 | **+0.004** | +0.000 | **+0.010** | +0.008 | +24…+63 % | ±0 |
+| tight + smooth_sigma 0.5 | +0.003 | +0.002 | −0.003 | +0.008 | +0.007 | +39…+95 % | ±0 |
+| fit_tol 0.45, line_tol 0.5 | +0.003 | +0.002 | +0.000 | +0.005 | +0.005 | +9…+28 % | ±0 |
+Root cause of the max-mode gain (confirms phase 1 abl_015_up2s): for icon/logo/line_art it is the effectively halved
+fit tolerance, which 1× tight fitting reproduces without 4× pixels, without the primitive loss and with ~⅓ of the
+byte increase. Only diagrams gain from resolution itself (max − tight = +0.015): 1-px box outlines between a fill and the
+background are lost at 1× and kept at 2× (dev_0117 +0.054, look: sheet). Max mode also has large losses on
+colour-shifted / JPEG line art (dev_0084 −0.066, 10× bytes: staircased diagonals at 2×).
