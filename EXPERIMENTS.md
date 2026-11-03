@@ -181,3 +181,4 @@ tuned baseline 0.838), ΔE −0.11. Overall **0.904** → best-v3.
 |---|---|---|---|
 | best-v1 | e07f24d | 0.895 | graph engine + presets + gradients + denoise (exp_010) |
 | best-v2 | 48e89b6 | 0.901 | + sub-pixel boundaries (exp_011) |
+| best-v3 | e0fe785 | 0.904 | + speedups, photo preset, gradient robustness (exp_015) |
