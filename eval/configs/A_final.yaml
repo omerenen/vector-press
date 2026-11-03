@@ -1,0 +1,5 @@
+name: A_final
+description: Stream A final (region primitives, robust rect refinement, blur-aware sharp corners, geometry repair), preset auto, print/cut metrics on.
+method: pipeline
+params: {preset: auto}
+printcut: true

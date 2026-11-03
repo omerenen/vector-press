@@ -554,7 +554,7 @@ def snap_region_primitives(regions, chains, opts, drawn, shape=None, ctx=None):
                     continue
                 c = chains[cid]
                 changes[cid] = _move_end(changes.get(cid, c.geom), at_start, p)
-        if validate and not _snap_keeps_valid(changes, chains, regions, drawn, fcache):
+        if validate and not _snap_keeps_valid(changes, set(new_geoms), chains, regions, drawn, fcache):
             continue
         for cid, g in changes.items():
             chains[cid].geom = g
@@ -565,7 +565,7 @@ def snap_region_primitives(regions, chains, opts, drawn, shape=None, ctx=None):
     return out
 
 
-def _snap_keeps_valid(changes, chains, regions, drawn, fcache):
+def _snap_keeps_valid(changes, protected, chains, regions, drawn, fcache):
     """True if no outline of a region touching the changed chains turns from simple into self-crossing."""
     from .validity import _ring_ok, flatten_geom, split_pinches
 
@@ -602,8 +602,42 @@ def _snap_keeps_valid(changes, chains, regions, drawn, fcache):
                 if any(chains[cid].geom is None for cid, _ in sub):
                     continue
                 if _ring_ok(ring(sub, {})) and not _ring_ok(ring(sub, changes)):
-                    return False
+                    if _is_sliver(regions[rr], chains):
+                        continue                 # a thin AA/JPEG sliver along the shape: its valid parts are emitted
+                    if not _repairable(sub, changes, protected, chains, ring):
+                        return False
     return True
+
+
+def _is_sliver(region, chains, max_thickness=2.0, max_area=30):
+    """Small or thin region (mean thickness = area / half perimeter of the lattice outline)."""
+    if region.area <= max_area:
+        return True
+    per = 0.0
+    for lp in region.loops:
+        for cid, _ in lp:
+            per += len(chains[cid].pts) - 1
+    return per > 0 and region.area / (0.5 * per) < max_thickness
+
+
+def _repairable(sub, changes, protected, chains, ring):
+    """Would the loop be simple again if its ordinary (non-primitive) crossing chains became raw polylines?
+    (That is what the validity repair does later; only crossings among exact primitive edges are fatal.)"""
+    from types import SimpleNamespace
+
+    from .validity import _culprits, _polyline_geom, _ring_ok, flatten_geom
+    geoms = dict(changes)
+    cul = _culprits(sub, lambda cid: flatten_geom(geoms.get(cid, chains[cid].geom)))
+    cand = [cid for cid, _ in sub] if cul is None else list(cul)
+    fixed = False
+    for cid in cand:
+        c = chains[cid]
+        if c.snapped or c.prim is not None or cid in protected:
+            continue
+        tmp = SimpleNamespace(pts=c.pts, closed=c.closed, samples=c.samples, geom=geoms.get(cid, c.geom))
+        geoms[cid] = _polyline_geom(tmp, raw=True)
+        fixed = True
+    return fixed and _ring_ok(ring(sub, geoms))
 
 
 # ------------------------------------------------------------------ blur-invariant corner radius

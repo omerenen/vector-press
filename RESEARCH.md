@@ -112,6 +112,9 @@ The official corner error is measured from the nominal GT vertex; the Harris pea
 from it (GT-vs-GT floor), so the metric cannot reach 0.5 px. Alternatives for real corner accuracy: sub-pixel corner
 localisation from intensities (Förstner), line–line intersection (already used: TLS lines + intersection), primitive
 snapping (exact corners for rect/polygon outlines, chosen as a by-product of A-3). Proposed metric fix in HANDOFF_A.md.
+Prototyped a **line-pair corner detector** (straight TLS arms on both sides of a sample outside a 2-px blur zone, corner
+= their intersection; vectorised with cumulative moments) to recover blurred obtuse corners: diagram PSNR +0.6 dB but
+overall corner recall −0.10 (false corners on gentle curves / stroke ends) → rejected, kept as `corner_lines=False`.
 
 ### Geometry validity
 Self-intersections in our output have four causes (EXPERIMENTS A-4): float noise of relative path coordinates at the closing

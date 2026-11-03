@@ -352,3 +352,37 @@ invalid (polylines crossing an exact primitive edge) are emitted as their `make_
 Alternatives considered: constrained Bézier fitting (control points kept inside the lattice corridor; a QP per segment, does
 not handle zero-area and pinch cases), boolean clean-up of every path (`buffer(0)` on all regions: changes shared borders
 → gaps between neighbours), relaxing the metric (not ours to change).
+
+### A-6 Results on dev_small (44 items, `--workers 1`), phase2-base = `A_base_small`
+Primitive analysis on all dev primitives (`analyze_prims.py`, 122 GT primitives; recovery as in the metric):
+| variant | dev prim recovery | remaining failures |
+|---|---|---|
+| base | 0.475 | split by junctions 54, wrong radius 4, fit rejected 6 |
+| + region_prims | 0.754 | radius (blur-rounded sharp boxes) 13, 5-gon instead of rect 5, split 11 (segmentation broken), rejected 5 |
+| + rect_refine (soft-L1 IRLS) | 0.828 | sharp boxes with r≈2–3.7 px 5, polygons on damaged boxes 5, segmentation failures ~11 |
+| + blur_sharp_ratio 3.8 | **0.861** | 1 real r=2.5 px corner now sharp (−1), 5 fixed (+5); the rest are segmentation failures (stroke fragmented into fill, score > 1 px from every GT edge) |
+proc2 (count only, no tuning; 157 primitives): base 0.293 → **0.65** with the same settings.
+
+Full metric runs on dev_small (A_all2_small = region_prims + rect_refine + blur_sharp 3.8 + geom_repair, before the
+snap-time validity check / culprit-only repair / solidity gate; the final code is measured on the full splits below):
+| cat | composite | SSIM | PSNR | ΔE | edge_f | edge_dev | corner rec | prim | gz | self-x |
+|---|---|---|---|---|---|---|---|---|---|---|
+| ALL | 0.909 (+0.003) | 0.971 (+0.001) | 32.7 (+0.35) | 1.139 (−0.025) | 0.959 (+0.003) | 0.199 (−0.008) | 0.911 (+0.075) | 0.943 (+0.405) | +0 % | 0.96 (−1.48) |
+| icon | +0.004 | +0.001 | +0.75 | −0.014 | 0 | −0.007 | | | −9 % | 0 |
+| logo | +0.002 | +0.001 | +0.31 | −0.023 | 0 | −0.004 | | | +1 % | 0 |
+| flat_illustration | +0.002 | +0.001 | +0.80 | −0.014 | +0.003 | −0.016 | +0.364 | +0.500 | +2 % | 0 |
+| line_art | +0.002 | +0.002 | +0.02 | −0.057 | +0.002 | +0.003 | | | +6 % | 0 |
+| diagram | +0.005 | +0.002 | +0.41 | −0.056 | +0.003 | −0.025 | −0.008 | +0.373 | −5 % | 0 |
+| gradient | +0.002 | 0 | +0.06 | −0.004 | +0.011 | −0.001 | 0 | | 0 % | 0.57 |
+No category regresses beyond the tolerances. Polyline fallback at that stage repaired *every* chain of an invalid loop
+(n_nodes +80 %); fixed afterwards (only crossing chains, light simplification, snap-time check) — dev_0090/0105/0063
+then have fewer nodes than base.
+
+**corner_lines (line-pair corner detector, blur zone 2 px; `A_all2cl_small` vs `A_all2_small`) — rejected:** diagram
+composite +0.006 / PSNR +0.64, but corner recall −0.10 overall (diagram −0.153), flat_illustration −0.006, line_art −0.004
+(false corners on gentle curves and on stroke ends). Kept behind `corner_lines=False`.
+
+**Cost** (process time, 6 dev images, same machine state): all new options together 1.37× the base pipeline (line-art
+and diagrams up to 2×: model selection on every multi-chain loop). Gates: loops clipped by the canvas skipped, rect/ellipse
+only for loops with hull solidity ≥ 0.9, IRLS refinement only when the grid fit is within 2× tolerance, partition-based
+robust error, exact vectorised ellipse distance (replaces 720-point sampling).
