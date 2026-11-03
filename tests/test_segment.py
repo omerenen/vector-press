@@ -79,3 +79,26 @@ def test_quantize_ms_engine_runs():
     lbl, pr, pl, info, _ = Q.quantize(rgb, np.full((64, 64), 255, np.uint8), segment="ms", seg_lambda=0.01)
     R, rl = label_regions(lbl)
     assert len(rl) == 2, info
+
+
+def test_ms_engine_textured_flat_art_stays_vector():
+    """Grainy flat art (generator noise) must not be routed to the photo engine and must stay compact."""
+    from vectorizer.api import vectorize
+    rng = np.random.default_rng(5)
+    img = np.zeros((256, 256, 3), np.float64) + (235, 225, 200)
+    yy, xx = np.mgrid[0:256, 0:256]
+    img[(xx - 128) ** 2 + (yy - 128) ** 2 < 70 ** 2] = (200, 60, 40)
+    img[100:160, 30:90] = (30, 30, 30)
+    img = np.clip(img + rng.normal(0, 7, img.shape), 0, 255).astype(np.uint8)
+    res = vectorize(img, segment="ms", seg_premerge=True)
+    assert res.stats["engine"] == "graph" and "fallback" not in res.stats
+    assert res.stats["n_regions"] <= 10, res.stats["n_regions"]
+
+
+def test_reduce_paints_caps_colours():
+    from vectorizer.pipeline.segment import reduce_paints
+    rng = np.random.default_rng(6)
+    pal = rng.random((50, 3)).astype(np.float32)
+    lbl = rng.integers(0, 50, (30, 30)).astype(np.int32)
+    out, P = reduce_paints(lbl, pal, 8)
+    assert len(P) == 8 and out.max() < 8 and out.min() >= 0

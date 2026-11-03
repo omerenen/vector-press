@@ -42,13 +42,23 @@ def region_edges(R):
 
 
 def _region_stats(R, lab, n):
+    """(area, colour sums (n,3), sum of squared colour norms) per region id; channel planes, no copies of the
+    whole image when every pixel is valid."""
     r = R.ravel()
     ok = r >= 0
-    r = r[ok]
-    px = lab.reshape(-1, 3)[ok].astype(np.float64)
+    full = bool(ok.all())
+    if not full:
+        r = r[ok]
     area = np.bincount(r, minlength=n).astype(np.float64)
-    S = np.stack([np.bincount(r, weights=px[:, c], minlength=n) for c in range(3)], 1)
-    Q = np.bincount(r, weights=(px * px).sum(1), minlength=n)
+    S = np.empty((n, 3))
+    Q = np.zeros(n)
+    for c in range(3):
+        ch = lab[..., c].ravel()
+        if not full:
+            ch = ch[ok]
+        ch = ch.astype(np.float64)
+        S[:, c] = np.bincount(r, weights=ch, minlength=n)
+        Q += np.bincount(r, weights=ch * ch, minlength=n)
     return area, S, Q
 
 
