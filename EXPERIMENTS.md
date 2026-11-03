@@ -429,3 +429,17 @@ pixels, so at 2× the density falls below the thresholds — tdev_0000/0024/0039
 `graphic_override`), and tdev_0003 is wrongly kept in the region engine (−0.101). Region-engine items proper:
 tdev_0021 +0.026, tdev_0033 −0.002. With the routing fixed (cand3/cand4 +0.035/+0.036 in fast mode) there is no
 tdev argument for 2× on flat presets; decision unchanged (2× only for line_art/diagram).
+
+### C-11 Full tdev with cand4 defaults (C_tfinal): +0.012 only (tdev_small: +0.036) → losses on unseen items, diagnosed
+C_tbase 0.7023 → C_tfinal 0.7140 (SSIM +0.015, LPIPS −0.006, ΔE −0.14, edgeF +0.008; logo +0.020, cutfile +0.027,
+poster +0.011, sticker +0.004, vector_flat **−0.009**). Gains as on tdev_small (tdev_0049 +0.118, 0039 +0.113, 0012
++0.105, 0024 +0.101, 0020 +0.093, 0045 +0.093, 0051 +0.086, 0048 +0.083, 0017 +0.081, 0000 +0.077). Losses, by cause:
+- `photo_route="try"` on many-colour painterly images whose region count stays low (no fallback): tdev_0005 −0.077
+  (c90 272, LPIPS 0.10→0.20), tdev_0050 −0.073 (c90 189).
+- `graphic_override` on many-colour items: tdev_0040 −0.098 (c90 146, LPIPS 0.05→0.17), tdev_0028 −0.067 (c90 672);
+  small: tdev_0013 −0.012 (c90 10).
+- `fringe` on textured art: tdev_0010 −0.041 (47 colours, 56 608 px re-assigned).
+All winners of the routing rules have c90 ≤ 74 (and the dev / test_0048-class items c90 ≤ 61); all losers c90 ≥ 146;
+fringe's targets have ≤ 6 colours. Fix (thresholds now chosen on full tdev + dev — disclosed; ttest is the check):
+`route_max_c90=100` gates photo_route "try" and graphic_override, `fringe_max_colors=16` gates the fringe clean-up.
+Expected by construction: the 4 routing losers return to their phase2-base output (same engine and parameters).
