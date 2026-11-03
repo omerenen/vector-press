@@ -336,3 +336,24 @@ composite with the VTracer fallback (0003: MS 0.589 / 615 KB vs VTracer 0.720 / 
 reproducing texture; λ=0.01 routes more of them to the fallback than λ=0.03, hence its higher score.
 Dev (phase-1, 44 images): ms λ=0.01 regresses line_art (−0.016: thin AA lines took their diluted region mean colour,
 6→74 paths because every region had its own paint) and photo (dev_0123 no longer falls back) → fix B-3.
+
+### B-3 Making `ms` safe on phase-1 art (dev_small, 44 images) + routing
+- `ms` alone keeps high-contrast AA/JPEG fragments along strokes as regions (they are "real" for a piecewise-constant
+  energy): dev_0081 (simple line drawing) 207 regions instead of 5, ragged edges, line_art −0.016.
+- Fixes: (1) `seg_premerge`: run the phase-1 speckle merge + sliver removal on the palette over-segmentation first, MS
+  then merges what the area rule cannot (texture fragments surrounded by fragments); (2) region colours: regions within
+  0.02 OKLab of their majority palette colour share that palette label (one paint, one path per colour as before);
+  thin regions without flat pixels take the pure palette colour; final colours = per-label median of flat pixels
+  (phase-1 rule).
+| dev_small | composite | diagram | flat | gradient | icon | line_art | logo | photo |
+|---|---|---|---|---|---|---|---|---|
+| base (speed-refactored, identical to phase2-base 0.9061) | 0.9061 | 0.8876 | 0.9617 | 0.8724 | 0.9553 | 0.9126 | 0.9351 | 0.7609 |
+| ms λ0.01 | 0.9006 | 0.8834 | 0.9621 | 0.8733 | 0.9550 | 0.8968 | 0.9344 | 0.7337 |
+| ms + premerge + snap + medians | 0.9036 | 0.8883 | 0.9619 | 0.8742 | 0.9553 | 0.9135 | 0.9359 | 0.7261 |
+All non-photo categories within tolerance (gradient edge-F −0.004, ΔE ±0.01); photo −0.035 = one image (dev_0123)
+no longer routed to the photo engine because MS produces far fewer regions than the palette stage.
+- tdev_small with premerge: 0.7179 (paths median 8 518, 1.16 MB) vs 0.7229 without; region densities after MS drop
+  (0039 14→6.7, 0003 5.2→3.5 per 1000 px) so the unchanged density threshold (8/1000) sends 0039/0048 to the region engine.
+  Per image, region output beats the VTracer photo engine up to 2.5 regions/1000 px (0012) and loses from 3.5 (0003 fur:
+  0.566 vs 0.720; 0048: 0.598 vs 0.673) → `seg_max_density` (density threshold used when segment="ms"), simulated 0.003:
+  0.7293 on tdev_small.

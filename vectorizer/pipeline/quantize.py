@@ -505,7 +505,7 @@ def label_medians(lbl, lab, flat, fallback):
 
 def quantize(rgb, alpha, radius=0.045, max_colors=64, min_area=None, window=2, alpha_threshold=128,
              thin_lines=True, mix_suppress=True, slivers=True, merge_frac=0.6, denoise=0, min_area_scale=1.0,
-             low_alpha=0, bail_density=None, segment="palette", seg_lambda=0.01, seg_snap=0.0, seg_paints=None, seg_init="palette", seg_model="const", seg_pal_snap=0.02, seg_premerge=False):
+             low_alpha=0, bail_density=None, segment="palette", seg_lambda=0.01, seg_snap=0.0, seg_paints=None, seg_init="palette", seg_model="const", seg_pal_snap=0.02, seg_premerge=False, seg_budget=None):
     """Return (labels HxW int32 with -1 transparent, palette_rgb (K,3) float, palette_lab, info dict).
 
     segment: "palette" (phase-1: palette components + fixed-area speckle merge) or "ms" (palette components as an
@@ -538,7 +538,7 @@ def quantize(rgb, alpha, radius=0.045, max_colors=64, min_area=None, window=2, a
                             seg_snap, bail_density, H, W, seg_paints, seg_init, rgb, seg_model, seg_pal_snap,
                             premerge_area=(int(np.clip(round(H * W / 25000 * min_area_scale), 3 if min_area_scale >= 1
                                                        else 2, 400)) if min_area is None else min_area)
-                            if seg_premerge else 0)
+                            if seg_premerge else 0, seg_budget=seg_budget)
     if bail_density:
         from .boundary import label_regions
         n0 = len(label_regions(lbl)[1])
@@ -569,7 +569,7 @@ def quantize(rgb, alpha, radius=0.045, max_colors=64, min_area=None, window=2, a
 
 def _quantize_ms(lab, valid, flat, pal, lbl, noise, stats, thin_lines, slivers, radius, seg_lambda, seg_snap,
                  bail_density, H, W, seg_paints=None, seg_init="palette", rgb=None, seg_model="const",
-                 seg_pal_snap=0.02, premerge_area=0):
+                 seg_pal_snap=0.02, premerge_area=0, seg_budget=None):
     from .boundary import label_regions
     from .segment import ms_merge, reduce_paints, snap_colors
     if thin_lines in (True, "ridge", "both"):
@@ -581,6 +581,13 @@ def _quantize_ms(lab, valid, flat, pal, lbl, noise, stats, thin_lines, slivers, 
             lbl = merge_small_regions(lbl, pal, premerge_area)
             if slivers:
                 lbl = remove_slivers(lbl, lab, pal, radius)
+            if bail_density:
+                # routing (preset auto) keeps the phase-1 semantics: the region count after the phase-1 clean-up
+                # decides about the photo engine (texture), exactly as before but without the raw-fragment bail-out
+                n_p1 = len(label_regions(lbl)[1])
+                if n_p1 > 300 and n_p1 > bail_density / 4.0 * H * W:
+                    return lbl, oklab_to_rgb8(pal), pal, {"noise": noise, "n_colors": len(pal), "min_area": premerge_area,
+                                                          "n_regions": int(n_p1), "bailed": True}, lab
     lpal = lbl
     if seg_init == "fz":
         # graph-based over-segmentation of the raw colours (Felzenszwalb & Huttenlocher 2004) instead of palette
@@ -598,6 +605,14 @@ def _quantize_ms(lab, valid, flat, pal, lbl, noise, stats, thin_lines, slivers, 
                                               "n_regions": int(n0), "bailed": True}, lab
     lam = seg_lambda * np.sqrt(H * W) / 1024.0
     R1, minfo = ms_merge(R0, lab, lam, model=seg_model)
+    if seg_budget:
+        # region budget (no engine fallback, e.g. print/cut): continue the merge hierarchy with a doubled boundary
+        # price until the region count fits (cheap: every round starts from the previous partition)
+        lam_b = lam
+        while minfo["n1"] > seg_budget * H * W and lam_b < 256 * lam:
+            lam_b *= 2.0
+            R1, inf2 = ms_merge(R1, lab, lam_b, model=seg_model)
+            minfo = dict(inf2, rounds=minfo["rounds"] + inf2["rounds"], lam_final=lam_b)
     R1 = R1.astype(np.int32)
     K = int(R1.max()) + 1
     m = flat & (R1 >= 0)
@@ -632,6 +647,12 @@ def _quantize_ms(lab, valid, flat, pal, lbl, noise, stats, thin_lines, slivers, 
     remap[used] = np.arange(len(used))
     lbl = np.where(lbl >= 0, remap[np.maximum(lbl, 0)], TRANSPARENT).astype(np.int32)
     newpal = newpal[used]
+    if not seg_paints:
+        # final colours as in phase 1: median of the flat pixels of each label (all its pixels if < 3 are flat);
+        # labels without flat pixels keep their (majority palette) colour
+        med = label_medians(lbl, lab, flat, newpal)
+        nflat = np.bincount(lbl[(lbl >= 0) & flat], minlength=len(newpal))
+        newpal = np.where((nflat >= 3)[:, None], med, newpal).astype(np.float32)
     info = {"noise": noise, "n_colors": len(newpal), "min_area": 0, "n_init": n0, "ms_rounds": minfo["rounds"],
             "n_regions": int(len(label_regions(lbl)[1]))}
     return lbl, oklab_to_rgb8(newpal), newpal, info, lab
