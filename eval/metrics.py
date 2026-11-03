@@ -356,7 +356,7 @@ def _apply(M, x, y):
     return float(v[0]), float(v[1])
 
 
-def primitive_recovery(svg, prims, sx=1.0, sy=1.0, tol=1.5):
+def primitive_recovery(svg, prims, sx=1.0, sy=1.0, ox=0.0, oy=0.0, tol=1.5):
     """Fraction of GT primitives represented by a matching native primitive (or exact polygon path).
 
     sx, sy: output user units -> GT pixel scale (output viewBox may differ).
@@ -364,6 +364,10 @@ def primitive_recovery(svg, prims, sx=1.0, sy=1.0, tol=1.5):
     if not prims:
         return None, {}
     els = svg_elements(svg)
+    # fold the viewBox scale/offset into every element matrix (user units -> GT pixels)
+    V = np.array([[sx, 0, ox], [0, sy, oy], [0, 0, 1.0]])
+    els = [(t, a, V @ Mx) for t, a, Mx in els]
+    sx = sy = 1.0
     cands = []  # (kind, data)
     for tag, at, M in els:
         def g(k, d=0.0):
@@ -386,7 +390,7 @@ def primitive_recovery(svg, prims, sx=1.0, sy=1.0, tol=1.5):
             x, y, w, h = g("x"), g("y"), g("width"), g("height")
             rr = g("rx", g("ry", 0.0))
             pts = [_apply(M, *p) for p in [(x, y), (x + w, y), (x + w, y + h), (x, y + h)]]
-            cands.append(("rect", ([(px * sx, py * sy) for px, py in pts], rr * sx)))
+            cands.append(("rect", ([(px * sx, py * sy) for px, py in pts], rr * math.hypot(M[0, 0], M[1, 0]))))
         elif tag in ("path", "polygon"):
             polys = []
             if tag == "path":
@@ -492,8 +496,17 @@ def svg_valid(svg):
 
 # ----------------------------------------------------------------- composite
 
+def is_vector(svg):
+    """False if the SVG embeds raster data (<image>, data: URIs) or foreign content - such output
+    would trivially score high on raster metrics without being a vectorisation."""
+    low = svg.lower()
+    return not ("<image" in low or "data:image" in low or "<foreignobject" in low)
+
+
 def composite(m):
-    """Single score in [0,1]; weights documented in EXPERIMENTS.md (E-metrics)."""
+    """Single score in [0,1]; weights documented in EXPERIMENTS.md (E-metrics). Non-vector output scores 0."""
+    if m.get("is_vector") is False:
+        return 0.0
     fid = (0.25 * m["ssim"] + 0.15 * min(m["psnr"], 40) / 40 + 0.20 * (1 - min(m["de_mean"], 20) / 20)
            + 0.20 * m["edge_f"] + 0.20 * (1 - min(m["gmsd"], 0.35) / 0.35))
     compact = 1 - float(np.clip(math.log10(max(m["gz_bytes"], 1000) / 1000) / 3, 0, 1))

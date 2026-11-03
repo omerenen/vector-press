@@ -69,8 +69,8 @@ def svg_scale(svg, W, H):
     vb = root.attrib.get("viewBox")
     if vb:
         v = [float(x) for x in re.split(r"[ ,]+", vb.strip())]
-        return W / v[2], H / v[3]
-    return 1.0, 1.0
+        return W / v[2], H / v[3], -v[0] * W / v[2], -v[1] * H / v[3]
+    return 1.0, 1.0, 0.0, 0.0
 
 
 def evaluate_one(args):
@@ -92,6 +92,7 @@ def evaluate_one(args):
         with open(os.path.join(out_dir, iid + ".svg"), "w") as f:
             f.write(svg)
         rec["valid"] = M.svg_valid(svg)
+        rec["is_vector"] = M.is_vector(svg)
         try:
             out = render_svg(svg, W, H)
         except Exception as e:  # render failure = invalid
@@ -127,8 +128,8 @@ def evaluate_one(args):
             rec["gap_ppm"] = rec["gap_px"] / (W4 * H4) * 1e6
             cr, ce = M.corner_metrics(composite_over(gt4), composite_over(out4), item.get("corners", []), scale)
             rec["corner_recall"], rec["corner_err"] = cr, ce
-            sx, sy = svg_scale(svg, W, H)
-            pr, per = M.primitive_recovery(svg, item.get("primitives", []), sx, sy)
+            sx, sy, ox, oy = svg_scale(svg, W, H)
+            pr, per = M.primitive_recovery(svg, item.get("primitives", []), sx, sy, ox, oy)
             rec["prim_recovery"] = pr
             rec["prim_per_type"] = per
         rec["composite"] = M.composite(rec)

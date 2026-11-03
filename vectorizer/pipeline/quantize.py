@@ -438,11 +438,21 @@ def merge_small_regions(lbl, pal, min_area, passes=3, connectivity=4):
 
 
 def quantize(rgb, alpha, radius=0.045, max_colors=64, min_area=None, window=2, alpha_threshold=128,
-             thin_lines=True, mix_suppress=True, slivers=True, merge_frac=0.6, denoise=0, min_area_scale=1.0):
+             thin_lines=True, mix_suppress=True, slivers=True, merge_frac=0.6, denoise=0, min_area_scale=1.0,
+             low_alpha=0, bail_density=None):
     """Return (labels HxW int32 with -1 transparent, palette_rgb (K,3) float, palette_lab, info dict)."""
     H, W, _ = rgb.shape
     lab = rgb8_to_oklab(rgb)
     valid = alpha >= alpha_threshold
+    if low_alpha and low_alpha < alpha_threshold:
+        # flat semi-transparent areas (shadows, translucent parts) are kept; anti-aliased edges
+        # against transparency (alpha ramps) still use the 50 % threshold
+        a = alpha.astype(np.int16)
+        P = np.pad(a, 1, mode="edge")
+        var = np.maximum.reduce([np.abs(P[1:-1, 2:] - a), np.abs(P[1:-1, :-2] - a),
+                                 np.abs(P[2:, 1:-1] - a), np.abs(P[:-2, 1:-1] - a)])
+        flat = ndi.binary_erosion(var <= 10, iterations=1, border_value=1)
+        valid |= (alpha >= low_alpha) & flat
     noise = estimate_noise(lab)
     if denoise:
         from .preprocess import sigma_filter
@@ -451,6 +461,13 @@ def quantize(rgb, alpha, radius=0.045, max_colors=64, min_area=None, window=2, a
     pal, flat = extract_palette(lab, valid, radius=radius, max_colors=max_colors, noise=noise, mix_suppress=mix_suppress,
                                 merge_frac=merge_frac, stats=stats)
     lbl = assign_labels(lab, valid, pal, flat, window=window)
+    if bail_density:
+        from .boundary import label_regions
+        n0 = len(label_regions(lbl)[1])
+        if n0 > 300 and n0 > bail_density * H * W:
+            # texture / noise: the caller switches engines; skip the expensive clean-up
+            return lbl, oklab_to_rgb8(pal), pal, {"noise": noise, "n_colors": len(pal), "min_area": 0,
+                                                   "n_regions": int(n0), "bailed": True}, lab
     if thin_lines in (True, "ridge", "both"):
         lbl = rescue_ridges(lab, lbl, pal, valid, noise, stats=stats)
     if thin_lines in (True, "bridge", "both"):
@@ -473,5 +490,6 @@ def quantize(rgb, alpha, radius=0.045, max_colors=64, min_area=None, window=2, a
         if mk.sum() < 3:
             mk = lbl == k
         newpal[k] = np.median(lab[mk], axis=0) if mk.any() else pal[used[k]]
-    info = {"noise": noise, "n_colors": K, "min_area": min_area}
+    from .boundary import label_regions
+    info = {"noise": noise, "n_colors": K, "min_area": min_area, "n_regions": int(len(label_regions(lbl)[1]))}
     return lbl, oklab_to_rgb8(newpal), newpal, info, lab

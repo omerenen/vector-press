@@ -49,11 +49,18 @@ def _pil_to_rgba(im: Image.Image) -> np.ndarray:
 def load_rgba(image: ImageLike) -> np.ndarray:
     """Return an (H, W, 4) uint8 RGBA array."""
     if isinstance(image, np.ndarray):
-        a = image
+        a = np.asarray(image)
         if a.dtype != np.uint8:
-            a = a.astype(np.float64)
-            if a.max() <= 1.0 + 1e-6:
-                a = a * 255.0
+            if a.dtype == np.uint16:
+                a = a.astype(np.float64) / 257.0
+            elif np.issubdtype(a.dtype, np.integer):
+                a = a.astype(np.float64)
+                if a.size and a.max() > 255:
+                    a = a / a.max() * 255.0
+            else:
+                a = np.nan_to_num(a.astype(np.float64), nan=0.0, posinf=1.0, neginf=0.0)
+                if a.size == 0 or a.max() <= 1.0 + 1e-6:
+                    a = a * 255.0
             a = np.clip(a + 0.5, 0, 255).astype(np.uint8)
         if a.ndim == 2:
             a = np.stack([a, a, a, np.full_like(a, 255)], -1)

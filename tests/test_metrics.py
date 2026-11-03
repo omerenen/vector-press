@@ -32,3 +32,16 @@ def test_primitive_recovery_multi_subpath_and_round_ellipse():
              {"type": "ellipse", "cx": 60, "cy": 60, "rx": 20.2, "ry": 20.0, "angle": 120.0}]
     rec, per = M.primitive_recovery(svg, prims)
     assert rec == 1.0
+
+
+def test_embedded_raster_scores_zero():
+    m = {"is_vector": M.is_vector('<svg xmlns="http://www.w3.org/2000/svg"><image href="data:image/png;base64,AA"/></svg>'),
+         "ssim": 1, "psnr": 60, "de_mean": 0, "edge_f": 1, "gmsd": 0, "gz_bytes": 100}
+    assert m["is_vector"] is False and M.composite(m) == 0.0
+
+
+def test_primitive_recovery_viewbox_offset():
+    svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="10 10 50 50"><circle cx="35" cy="35" r="10"/></svg>'
+    # 100 px render of a 50-unit viewBox starting at 10: centre (35,35) -> (50,50), r 10 -> 20
+    rec, _ = M.primitive_recovery(svg, [{"type": "circle", "cx": 50, "cy": 50, "rx": 20, "ry": 20}], 2.0, 2.0, -20.0, -20.0)
+    assert rec == 1.0

@@ -34,6 +34,9 @@ DEFAULTS = dict(
     max_side=2048,           # larger inputs are processed at this size (SVG keeps the original size)
     upscale=1,               # process at this factor (bicubic) - used by mode="max"
     upscale_scaled=("corner_scale", "seam_width"),  # px-unit options rescaled when upscaling
+    upscale_max_side=3072,   # max mode never processes more than this many px on the long side
+    max_region_density=0.008,  # preset="auto": >8 regions per 1000 px (dev: flat art <= 5.7, photos 18-26) -> photo engine
+    low_alpha=24,            # flat semi-transparent areas with alpha >= this are kept (with fill-opacity)
     seam_width=1.0,          # width of the under-stroke along shared borders (removes AA seams)
     line_tls=0.45,           # straight-line test tolerance on TLS fit (px)
     sagitta_tol=0.25,        # staircase-vs-curve test: max parabola sagitta for a straight line (px), 0 = off
@@ -78,97 +81,143 @@ def _map_user_options(options: dict) -> dict:
         o.setdefault("max_colors", max(1, int(colors)))
     detail = o.pop("detail", None)
     if detail is not None:
-        d = float(min(max(detail, 0.0), 1.0))          # 0 = coarse, 1 = fine; 0.5 = defaults
+        d = float(min(max(float(detail), 0.0), 1.0))   # 0 = coarse, 1 = fine; 0.5 = defaults
         o.setdefault("fit_tol", 0.6 * (2.0 ** (1.0 - 2.0 * d)))
         o.setdefault("color_radius", 0.045 * (1.6 ** (1.0 - 2.0 * d)))
         o.setdefault("min_area_scale", 2.0 ** (2.0 - 4.0 * d))
     cs = o.pop("corner_sharpness", None)
     if cs is not None:
-        c = float(min(max(cs, 0.0), 1.0))
+        c = float(min(max(float(cs), 0.0), 1.0))
         o.setdefault("corner_angle", 80.0 - 50.0 * c)  # 0.5 -> 55 deg (default)
     return o
+
+
+def _pixel_svg(rgba):
+    """Exact output for tiny images: one rect per horizontal run of equal pixels."""
+    from .pipeline.color import hex_color
+    H, W = rgba.shape[:2]
+    els = []
+    for y in range(H):
+        x = 0
+        while x < W:
+            px = rgba[y, x]
+            x1 = x + 1
+            while x1 < W and np.array_equal(rgba[y, x1], px):
+                x1 += 1
+            if px[3] > 0:
+                op = f' fill-opacity="{px[3] / 255:.3f}"' if px[3] < 255 else ""
+                els.append(f'<rect x="{x}" y="{y}" width="{x1 - x}" height="1" fill="{hex_color(px[:3])}"{op}/>')
+            x = x1
+    return svg_document(W, H, "".join(els))
+
+
+def _normalise_vtracer_svg(svg, W, H, W0, H0):
+    """VTracer output -> same header convention as the graph engine (viewBox, no XML prolog/comment)."""
+    import re
+    body = svg[svg.index(">", svg.index("<svg")) + 1:]
+    body = body[: body.rindex("</svg>")]
+    body = re.sub(r"\s*\n\s*", "", body)
+    return svg_document(W, H, body, out_size=(W0, H0))
+
+
+def _resize(rgba, W, H, resample):
+    from PIL import Image as _Image
+    return np.asarray(_Image.fromarray(np.ascontiguousarray(rgba), "RGBA").resize((W, H), resample))
 
 
 def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **options) -> Result:
     """Vectorise a raster image.
 
-    image:  bytes, file path, PIL.Image or numpy array (H,W[,C]).
-    preset: "auto" (classifier) or one of vectorizer.presets.PRESETS.
-    mode:   "fast" (default) or "max" (slower, see README).
+    image:  bytes, file path, PIL.Image or numpy array (H,W[,C]; uint8, uint16 or float 0..1).
+    preset: "auto" (classifier) or one of vectorizer.presets.PRESETS. The classifier reports
+            image_type in {icon, logo, line_art, gradient, photo}; diagrams are reported as line_art
+            and flat illustrations as logo/icon (they share presets).
+    mode:   "fast" (default) or "max" (flat presets processed at up to 2x, slower, see README).
     options (user-facing): colors (int|"auto"), detail (0..1), corner_sharpness (0..1),
              primitives (bool), gradients (bool), centerline (bool); any internal key of DEFAULTS.
-    Returns Result(svg, stats) with stats: image_type, preset, timings per stage, sizes, counts.
+    Returns Result(svg, stats); stats always contains width, height, mode, preset, image_type,
+    timings (per stage, seconds) and bytes.
     """
+    from PIL import Image as _Image
     t_all = time.perf_counter()
     timings = {}
     t = time.perf_counter()
     rgba = load_rgba(image)
     timings["load"] = time.perf_counter() - t
     H, W = rgba.shape[:2]
-    stats = {"width": W, "height": H, "mode": mode}
+    stats = {"width": W, "height": H, "mode": mode, "image_type": None}
+    if mode not in ("fast", "max"):
+        raise ValueError("mode must be 'fast' or 'max'")
     opts = dict(DEFAULTS)
-    if preset == "auto":
+    auto = preset == "auto"
+    tiny = H == 0 or W == 0 or min(H, W) < 4 or H * W <= 64
+    if auto:
         t = time.perf_counter()
-        itype, feats = classify(rgba) if H > 0 and W > 0 else ("icon", {})
+        itype, feats = classify(rgba) if not tiny else ("icon", {})
         timings["classify"] = time.perf_counter() - t
         stats["image_type"] = itype
         preset = TYPE_TO_PRESET[itype]
-    else:
-        stats["image_type"] = None
     opts.update(preset_options(preset))
     stats["preset"] = preset
-    if mode == "max":
-        if preset in MAX_MODE_PRESETS:
-            opts.update(MAX_MODE)
-    elif mode != "fast":
-        raise ValueError("mode must be 'fast' or 'max'")
+    if mode == "max" and preset in MAX_MODE_PRESETS:
+        opts.update(MAX_MODE)
     opts.update({k: v for k, v in _map_user_options(options).items() if v is not None})
     unknown = set(opts) - set(DEFAULTS)
     if unknown:
         raise TypeError(f"unknown option(s): {sorted(unknown)}")
-    if H == 0 or W == 0:
-        return Result(svg_document(max(W, 1), max(H, 1), ""), stats)
+
+    def finish(svg):
+        timings["total"] = time.perf_counter() - t_all
+        stats["timings"] = timings
+        stats["bytes"] = len(svg.encode())
+        return Result(svg, stats)
+
+    if tiny:
+        stats["engine"] = "pixels"
+        return finish(_pixel_svg(rgba) if H and W else svg_document(max(W, 1), max(H, 1), ""))
     W0, H0 = W, H
     if opts["max_side"] and max(H, W) > opts["max_side"]:
-        from PIL import Image as _Image
         sc = opts["max_side"] / max(H, W)
         W, H = max(1, int(round(W * sc))), max(1, int(round(H * sc)))
-        rgba = np.asarray(_Image.fromarray(rgba, "RGBA").resize((W, H), _Image.LANCZOS))
+        rgba = _resize(rgba, W, H, _Image.LANCZOS)
         stats["processed_size"] = [W, H]
     if opts["upscale"] and opts["upscale"] > 1 and opts["engine"] == "graph":
-        from PIL import Image as _Image
-        f = float(opts["upscale"])
-        if max(H, W) * f <= opts["max_side"]:
+        f = min(float(opts["upscale"]), opts["upscale_max_side"] / max(H, W))
+        if f >= 1.25:
             W, H = int(round(W * f)), int(round(H * f))
-            rgba = np.asarray(_Image.fromarray(rgba, "RGBA").resize((W, H), _Image.BICUBIC))
+            rgba = _resize(rgba, W, H, _Image.BICUBIC)
             stats["processed_size"] = [W, H]
+            stats["upscale"] = round(f, 3)
             # pixel-unit tolerances are defined at input resolution
             for k in opts["upscale_scaled"]:
                 opts[k] = opts.get(k, _PX_DEFAULTS.get(k)) * f
-            if opts["upscale_scaled"]:
-                opts["min_area_scale"] = opts["min_area_scale"] * f * f
-    if opts["engine"] == "vtracer_raw":
-        t = time.perf_counter()
-        svg = vtracer_trace(rgba, **(opts["vtracer_params"] or {}))
-        timings["vtracer"] = time.perf_counter() - t
-    else:
+    svg = None
+    if opts["engine"] == "graph":
         t = time.perf_counter()
         lbl, pal_rgb, pal_lab, qinfo, lab = quantize(rgba[..., :3], rgba[..., 3], radius=opts["color_radius"],
                                                 max_colors=opts["max_colors"], min_area=opts["min_area"],
                                                 min_area_scale=opts["min_area_scale"],
                                                 thin_lines=opts["thin_lines"], mix_suppress=opts["mix_suppress"],
                                                 slivers=opts["slivers"], merge_frac=opts["merge_frac"],
-                                                denoise=opts["denoise"])
+                                                denoise=opts["denoise"], low_alpha=opts["low_alpha"],
+                                                bail_density=opts["max_region_density"] * 4 if auto else None)
         timings["quantize"] = time.perf_counter() - t
         stats.update(qinfo)
-        if opts["engine"] == "vtracer":
-            t = time.perf_counter()
-            img = np.zeros((H, W, 4), np.uint8)
-            m = lbl >= 0
-            img[m, :3] = np.clip(pal_rgb[lbl[m]] + 0.5, 0, 255).astype(np.uint8)
-            img[m, 3] = 255
-            svg = vtracer_trace(img, filter_speckle=1, color_precision=8, layer_difference=1)
-            timings["vtracer"] = time.perf_counter() - t
+        if auto and qinfo["n_regions"] > 300 and qinfo["n_regions"] > H * W * opts["max_region_density"]:
+            # region explosion (texture / noise / star fields misclassified as flat art): photo engine
+            stats["fallback"] = f"photo ({qinfo['n_regions']} regions)"
+            preset = "photo"
+            stats["preset"] = preset
+            popts = preset_options("photo")
+            opts["engine"] = "vtracer_raw"
+            opts["vtracer_params"] = dict(popts["vtracer_params"])
+            if qinfo["n_regions"] > 0.1 * H * W:      # pure noise: bound the output size
+                opts["vtracer_params"].update(filter_speckle=8, color_precision=6, layer_difference=24)
+            if max(H, W) > popts["max_side"]:
+                sc = popts["max_side"] / max(H, W)
+                W, H = max(1, int(round(W * sc))), max(1, int(round(H * sc)))
+                rgba = _resize(rgba, W, H, _Image.LANCZOS)
+                stats["processed_size"] = [W, H]
         else:
             label_fill, defs = None, []
             if opts["gradients"]:
@@ -178,16 +227,26 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
                 timings["gradients"] = time.perf_counter() - t
                 stats["n_gradients"] = len(defs)
             ctx = {"lab": lab, "pal_lab": pal_lab, "skip_labels": set(label_fill or {})} if opts["subpixel"] else None
-            els, est = build_elements(lbl, pal_rgb, opts, timings, label_fill=label_fill, ctx=ctx)
+            els, est = build_elements(lbl, pal_rgb, opts, timings, label_fill=label_fill, ctx=ctx,
+                                      alpha=rgba[..., 3])
             stats.update(est)
             body = (f"<defs>{''.join(defs)}</defs>" if defs else "") + "".join(els)
             svg = svg_document(W, H, body, out_size=(W0, H0))
-    if (W, H) != (W0, H0) and opts["engine"] != "graph":
-        import re as _re
-        svg = _re.sub(r'<svg([^>]*?)width="[^"]*" height="[^"]*"', 
-                      lambda m: f'<svg{m.group(1)}viewBox="0 0 {W} {H}" width="{W0}" height="{H0}"', svg, count=1)
+    if svg is None and opts["engine"] == "vtracer":
+        t = time.perf_counter()
+        lbl, pal_rgb, pal_lab, qinfo, lab = quantize(rgba[..., :3], rgba[..., 3], radius=opts["color_radius"],
+                                                max_colors=opts["max_colors"], merge_frac=opts["merge_frac"])
+        img = np.zeros((H, W, 4), np.uint8)
+        m = lbl >= 0
+        img[m, :3] = np.clip(pal_rgb[lbl[m]] + 0.5, 0, 255).astype(np.uint8)
+        img[m, 3] = 255
+        svg = _normalise_vtracer_svg(vtracer_trace(img, filter_speckle=1, color_precision=8, layer_difference=1),
+                                     W, H, W0, H0)
+        timings["vtracer"] = time.perf_counter() - t
+    if svg is None:  # vtracer_raw (photo preset or fallback)
+        t = time.perf_counter()
+        svg = _normalise_vtracer_svg(vtracer_trace(rgba, **(opts["vtracer_params"] or {})), W, H, W0, H0)
+        timings["vtracer"] = time.perf_counter() - t
+    stats["engine"] = opts["engine"]
     stats["width"], stats["height"] = W0, H0
-    timings["total"] = time.perf_counter() - t_all
-    stats["timings"] = timings
-    stats["bytes"] = len(svg.encode())
-    return Result(svg, stats)
+    return finish(svg)

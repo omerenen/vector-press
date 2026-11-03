@@ -24,9 +24,13 @@ from .fit import fit_chain, reverse_geom
 from .svgout import _join, fmt, geom_to_tokens, loop_d
 
 
-def _containment(regions, R, lbl):
-    """Decide hole filling and nesting depth (number of enclosing drawn regions)."""
+def _containment(regions, R, lbl, semi=None):
+    """Decide hole filling and nesting depth (number of enclosing drawn regions).
+
+    Holes are not filled if they contain transparent pixels or semi-transparent regions."""
     trans = lbl < 0
+    if semi is not None and semi.any():
+        trans = trans | semi[R]
     depth = np.zeros(len(regions), np.int32)
     objs = None
     for r in sorted(regions, key=lambda r: -(r.loop_area[r.outer] if r.loops else 0)):
@@ -48,7 +52,7 @@ def _containment(regions, R, lbl):
     return depth
 
 
-def build_elements(lbl, palette_rgb, opts, timings=None, label_fill=None, ctx=None):
+def build_elements(lbl, palette_rgb, opts, timings=None, label_fill=None, ctx=None, alpha=None):
     """Return (list of SVG element strings, stats).
 
     label_fill: optional {label: (fill_attr_string, seam_paint)} overrides (e.g. gradients).
@@ -71,7 +75,16 @@ def build_elements(lbl, palette_rgb, opts, timings=None, label_fill=None, ctx=No
             fit_chain(c, opts, ctx)
     timings["fit"] = time.perf_counter() - t
     t = time.perf_counter()
-    depth = _containment(regions, R, lbl)
+    # region opacity from the input alpha (median over the region); < 0.98 -> fill-opacity
+    opacity = np.ones(len(regions))
+    if alpha is not None and (alpha[lbl >= 0] < 250).any():
+        from scipy import ndimage as _ndi
+        idx = np.arange(len(regions))
+        med = _ndi.median(alpha.astype(np.float64), labels=R + 1, index=idx + 1)
+        opacity = np.clip(np.asarray(med, np.float64) / 255.0, 0, 1)
+        opacity[opacity >= 0.98] = 1.0
+    semi = opacity < 1.0
+    depth = _containment(regions, R, lbl, semi)
     converted, stroke_els = set(), []
     if opts.get("centerline"):
         from .centerline import centerline_regions
@@ -110,6 +123,8 @@ def build_elements(lbl, palette_rgb, opts, timings=None, label_fill=None, ctx=No
             else:
                 col = hex_color(palette_rgb[r.label])
                 fill_attr = f'fill="{col}"'
+            if semi[r.rid]:
+                fill_attr += f' fill-opacity="{opacity[r.rid]:.3f}"'
             loops = [r.outer] + ([] if r.fill_holes else [i for i in range(len(r.loops)) if i != r.outer])
             outer = r.loops[r.outer]
             prim = chains[outer[0][0]].prim if len(outer) == 1 else None
@@ -121,12 +136,12 @@ def build_elements(lbl, palette_rgb, opts, timings=None, label_fill=None, ctx=No
                 for li in loops:
                     toks += loop_d([oriented(cid, rev) for cid, rev in r.loops[li]], prec)
                 fills.setdefault(fill_attr, [fill_attr, []])[1].extend(toks)
-            if seam_w > 0:
+            if seam_w > 0 and not semi[r.rid]:
                 for li in loops:
                     for cid, rev in r.loops[li]:
                         c = chains[cid]
                         other = c.left if not rev else c.right
-                        if other < 0 or not drawn[other]:
+                        if other < 0 or not drawn[other] or semi[other]:
                             continue
                         do = depth[other]
                         if do < d:
