@@ -209,6 +209,8 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
                    and feats["flat"] >= 0.2 and feats["ink_edge"] >= 0.4)
     if graphic:
         stats["graphic"] = True
+    if opts["fringe"] in (False, "none", "off"):
+        opts["fringe"] = None
     if opts["fringe"] == "auto":
         opts["fringe"] = "halo" if preset in FRINGE_PRESETS else None
 
