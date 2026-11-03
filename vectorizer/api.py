@@ -29,6 +29,12 @@ DEFAULTS = dict(
     smooth_sigma=1.0,        # boundary smoothing before curve fitting (samples)
     primitives=True,         # emit circle/ellipse/rect for closed boundaries that fit them
     prim_tol=0.75,           # primitive acceptance error (px, robust)
+    region_prims=False,      # phase 2 A: fit primitives to whole region outlines split by junctions, snap chains
+    rect_refine=False,       # phase 2 A: robust least-squares refinement of rect / rounded-rect fits
+    prim_polygons=True,      # region_prims: also straight-edged polygons (emitted without junction vertices)
+    poly_corner_angle=25.0,  # region_prims: permissive corner angle for polygon vertices (deg)
+    region_prim_min_len=24,  # region_prims: minimum loop length (samples)
+    region_prim_max_shift=1.5,  # region_prims: max junction displacement onto the primitive outline (px)
     precision=2,             # decimals in the SVG output
     vtracer_params=None,     # dict of VTracer parameters for engine="vtracer_raw"
     max_side=2048,           # larger inputs are processed at this size (SVG keeps the original size)

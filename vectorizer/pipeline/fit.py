@@ -321,18 +321,27 @@ def fit_ellipse(P):
 
 
 def ellipse_dist(P, e, n=720):
+    """Distance of points P to ellipse e=(cx,cy,a,b,theta) (vectorised Newton on the parametric angle)."""
     cx, cy, a, b, th = e
-    t = np.linspace(0, 2 * math.pi, n, endpoint=False)
     ct, st = math.cos(th), math.sin(th)
-    ex = cx + a * np.cos(t) * ct - b * np.sin(t) * st
-    ey = cy + a * np.cos(t) * st + b * np.sin(t) * ct
-    E = np.column_stack([ex, ey])
-    # chunked nearest distance
-    out = np.empty(len(P))
-    for s in range(0, len(P), 2048):
-        d = ((P[s:s + 2048, None, :] - E[None]) ** 2).sum(-1)
-        out[s:s + 2048] = np.sqrt(d.min(1))
-    return out
+    X = (P[:, 0] - cx) * ct + (P[:, 1] - cy) * st
+    Y = -(P[:, 0] - cx) * st + (P[:, 1] - cy) * ct
+    sx, sy = np.sign(X), np.sign(Y)
+    sx[sx == 0] = 1
+    sy[sy == 0] = 1
+    x, y = np.abs(X), np.abs(Y)                       # first quadrant (symmetry)
+    tg = np.linspace(0.0, math.pi / 2, 33)
+    dg = (x[:, None] - a * np.cos(tg)[None]) ** 2 + (y[:, None] - b * np.sin(tg)[None]) ** 2
+    t = tg[np.argmin(dg, axis=1)]
+    k = a * a - b * b
+    for _ in range(6):
+        c_, s_ = np.cos(t), np.sin(t)
+        f = k * s_ * c_ - x * a * s_ + y * b * c_
+        df = k * (c_ * c_ - s_ * s_) - x * a * c_ - y * b * s_
+        with np.errstate(divide="ignore", invalid="ignore"):
+            step = np.where(np.abs(df) > 1e-12, f / df, 0.0)
+        t = np.clip(t - step, 0.0, math.pi / 2)
+    return np.sqrt((x - a * np.cos(t)) ** 2 + (y - b * np.sin(t)) ** 2)
 
 
 def robust_err(d):
@@ -341,11 +350,33 @@ def robust_err(d):
     return float(max(np.percentile(d, 90), d.max() / 2.0))
 
 
+def robust_err_cols(D):
+    """robust_err of every column of D (N, K) at once (same value as np.percentile(.., 90))."""
+    D = np.abs(D)
+    n = D.shape[0]
+    pos = 0.9 * (n - 1)
+    lo = int(math.floor(pos))
+    hi = min(lo + 1, n - 1)
+    P = np.partition(D, [lo, hi], axis=0)
+    q = P[lo] + (pos - lo) * (P[hi] - P[lo])
+    return np.maximum(q, D.max(0) / 2.0)
+
+
 def _rounded_rect_sd(Q, hw, hh, r):
     q = np.abs(Q) - np.array([hw - r, hh - r])
     outside = np.sqrt((np.maximum(q, 0) ** 2).sum(1))
     inside = np.minimum(np.maximum(q[:, 0], q[:, 1]), 0)
     return outside + inside - r
+
+
+def _rounded_rect_sd_multi(Q, hw, hh, rs):
+    """_rounded_rect_sd for several radii at once -> (N, K)."""
+    rs = np.asarray(rs, float)[None, :]
+    qx = np.abs(Q[:, :1]) - (hw - rs)
+    qy = np.abs(Q[:, 1:2]) - (hh - rs)
+    outside = np.sqrt(np.maximum(qx, 0) ** 2 + np.maximum(qy, 0) ** 2)
+    inside = np.minimum(np.maximum(qx, qy), 0)
+    return outside + inside - rs
 
 
 def _min_area_rect(P):
@@ -369,7 +400,7 @@ def _min_area_rect(P):
     return best
 
 
-def fit_rounded_rect(P, tol, axis_aligned=False):
+def fit_rounded_rect(P, tol, axis_aligned=False, refine=False, refine_gate=2.5):
     """Return dict(cx, cy, w, h, r, angle_deg, err, err0) or None."""
     if len(P) < 8:
         return None
@@ -393,31 +424,93 @@ def fit_rounded_rect(P, tol, axis_aligned=False):
     Q = (P - ctr) @ np.array([[c, -s], [s, c]])
     hw, hh = w / 2, h / 2
     rmax = min(hw, hh)
-    best = None
-    for r in np.linspace(0, rmax, 41):
-        e = robust_err(_rounded_rect_sd(Q, hw, hh, r))
-        if best is None or e < best[1]:
-            best = (r, e)
-    r, e = best
+    rg = np.linspace(0, rmax, 41)
+    E = robust_err_cols(_rounded_rect_sd_multi(Q, hw, hh, rg))
+    i = int(np.argmin(E))
+    r, e = float(rg[i]), float(E[i])
     # local refine
     lo, hi = max(0, r - rmax / 40), min(rmax, r + rmax / 40)
-    for r2 in np.linspace(lo, hi, 11):
-        e2 = robust_err(_rounded_rect_sd(Q, hw, hh, r2))
+    rg2 = np.linspace(lo, hi, 11)
+    E2 = robust_err_cols(_rounded_rect_sd_multi(Q, hw, hh, rg2))
+    for r2, e2 in zip(rg2.tolist(), E2.tolist()):
         if e2 < e:
             r, e = r2, e2
     e0 = robust_err(_rounded_rect_sd(Q, hw, hh, 0.0))
+    out = {"cx": float(ctr[0]), "cy": float(ctr[1]), "w": w, "h": h, "r": float(r),
+           "angle": math.degrees(ang), "err": float(e), "err0": e0}
+    if refine and min(e, e0) <= refine_gate * tol and (axis_aligned or abs(math.degrees(ang)) >= 1.0):
+        # robust (soft-L1) least squares on the signed distance: the bounding box / hull initialisation
+        # is pulled by a few outlying samples (junction bumps, JPEG specks); the refined fit is not
+        sharp = _refine_rrect(P, ctr, hw, hh, ang, 0.0, True, axis_aligned)
+        if sharp is not None and sharp["err"] < e0:
+            out["sharp"] = sharp
+            out["err0"] = e0 = sharp["err"]
+        rnd = _refine_rrect(P, ctr, hw, hh, ang, r, False, axis_aligned)
+        if rnd is not None and rnd["err"] < e:
+            out.update({k: rnd[k] for k in ("cx", "cy", "w", "h", "r", "angle")})
+            out["err"] = e = rnd["err"]
     if min(e, e0) > tol:
         return None
-    return {"cx": float(ctr[0]), "cy": float(ctr[1]), "w": w, "h": h, "r": float(r),
-            "angle": math.degrees(ang), "err": float(e), "err0": e0}
+    return out
 
 
-def _fit_closed_primitive(chain, S, opts):
-    """Model selection for a closed chain: ellipse/circle vs sharp rect vs rounded rect.
+def _refine_rrect(P, ctr, hw, hh, ang, r, sharp, axis_aligned, f_scale=0.25, iters=12):
+    """Robust (soft-L1 IRLS, Gauss-Newton) refinement of a (rounded) rectangle fit."""
+    x = [float(ctr[0]), float(ctr[1]), hw, hh]
+    if not axis_aligned:
+        x.append(ang)
+    if not sharp:
+        x.append(max(r, 0.5))
+    x = np.array(x, float)
+    k = len(x)
 
-    Errors are max distances (px) of the smoothed boundary samples to the model. A sharp,
+    def res(x):
+        a = 0.0 if axis_aligned else x[4]
+        rr = 0.0 if sharp else min(max(x[-1], 0.0), max(min(x[2], x[3]), 0.0))
+        c, s = math.cos(a), math.sin(a)
+        Q = (P - x[:2]) @ np.array([[c, -s], [s, c]])
+        return _rounded_rect_sd(Q, abs(x[2]), abs(x[3]), rr)
+    f = res(x)
+    h = 1e-4
+    for _ in range(iters):
+        J = np.empty((len(P), k))
+        for j in range(k):
+            xp = x.copy()
+            xp[j] += h
+            J[:, j] = (res(xp) - f) / h
+        w = 1.0 / np.sqrt(1.0 + (f / f_scale) ** 2)
+        A = J.T @ (J * w[:, None]) + 1e-6 * np.eye(k)
+        g = J.T @ (w * f)
+        try:
+            dx = -np.linalg.solve(A, g)
+        except np.linalg.LinAlgError:
+            break
+        # step halving on the soft-L1 cost
+        cost = np.sum(np.sqrt(1 + (f / f_scale) ** 2))
+        t = 1.0
+        while t > 1e-3:
+            fn = res(x + t * dx)
+            if np.sum(np.sqrt(1 + (fn / f_scale) ** 2)) <= cost:
+                break
+            t *= 0.5
+        if t <= 1e-3:
+            break
+        x = x + t * dx
+        f = fn
+        if np.abs(t * dx).max() < 1e-4:
+            break
+    a = 0.0 if axis_aligned else x[4]
+    rr = 0.0 if sharp else min(max(x[-1], 0.0), max(min(x[2], x[3]), 0.0))
+    return {"cx": float(x[0]), "cy": float(x[1]), "w": float(2 * abs(x[2])), "h": float(2 * abs(x[3])), "r": float(rr),
+            "angle": math.degrees(a), "err": robust_err(f)}
+
+
+def choose_closed_primitive(S, opts):
+    """Model selection for a closed boundary: ellipse/circle vs sharp rect vs rounded rect.
+
+    Errors are robust distances (px) of the boundary samples to the model. A sharp,
     axis-aligned rectangle gets a small preference (design prior; blur rounds small corners).
-    Returns True if a primitive was assigned.
+    Returns (prim, geom, err) with geom oriented like S (region on the right), or None.
     """
     sig = opts.get("smooth_sigma", 1.0)
     ptol = opts.get("prim_tol", 0.75)
@@ -430,7 +523,7 @@ def _fit_closed_primitive(chain, S, opts):
             cands.append((robust_err(d), "ellipse", e))
     rr = None
     for axis_only in (True, False):
-        cand = fit_rounded_rect(S, ptol + 0.3, axis_aligned=axis_only)
+        cand = fit_rounded_rect(S, ptol + 0.3, axis_aligned=axis_only, refine=opts.get("rect_refine", False))
         if cand is not None and (rr is None or min(cand["err"], cand["err0"]) < min(rr["err"], rr["err0"]) - 0.05):
             rr = cand
     if rr is not None:
@@ -444,39 +537,47 @@ def _fit_closed_primitive(chain, S, opts):
             cands.append((rr["err"], "rrect", rr))
     cands = [c for c in cands if c[0] <= ptol]
     if not cands:
-        return False
+        return None
     # an ellipse that fits about as well as a (fully) rounded rectangle is the simpler description
     ell = [c for c in cands if c[1] == "ellipse"]
     if ell:
         cands = [(c[0] - 0.1, c[1], c[2]) if c[1] == "ellipse" else c for c in cands]
     err, kind, m = min(cands, key=lambda c: c[0])
+    cw = _is_cw(S)
     if kind == "ellipse":
         cx, cy, a, b, th = m
         if abs(a - b) <= max(0.35, 0.015 * max(a, b)):
             r = (a + b) / 2
             m = (cx, cy, r, r, 0.0)
-            chain.prim = {"type": "circle", "cx": cx, "cy": cy, "r": r}
+            prim = {"type": "circle", "cx": cx, "cy": cy, "r": r}
         else:
-            chain.prim = {"type": "ellipse", "cx": cx, "cy": cy, "rx": a, "ry": b, "angle": math.degrees(th)}
-        chain.geom = ellipse_geom(m, _is_cw(S))
-        return True
+            prim = {"type": "ellipse", "cx": cx, "cy": cy, "rx": a, "ry": b, "angle": math.degrees(th)}
+        return prim, ellipse_geom(m, cw), err
     if kind == "rrect" and m["r"] >= 0.47 * min(m["w"], m["h"]) and abs(m["w"] - m["h"]) < max(1.0, 0.02 * m["w"]):
         r = (m["w"] + m["h"]) / 4                       # fully rounded square == circle
-        chain.prim = {"type": "circle", "cx": m["cx"], "cy": m["cy"], "r": r}
-        chain.geom = ellipse_geom((m["cx"], m["cy"], r, r, 0.0), _is_cw(S))
-        return True
+        prim = {"type": "circle", "cx": m["cx"], "cy": m["cy"], "r": r}
+        return prim, ellipse_geom((m["cx"], m["cy"], r, r, 0.0), cw), err
     rr = dict(m)
     if kind == "rect0":
+        rr.update(rr.pop("sharp", {}))
         rr["r"] = 0.0
+    rr.pop("sharp", None)
     if abs(rr["angle"]) < 0.75:
         rr["angle"] = 0.0
     if rr["r"] < 0.75:
         rr["r"] = 0.0
-    chain.prim = {"type": "rect", **rr}
     g = rrect_geom(rr)
-    if not _is_cw(S):
+    if not cw:
         g = reverse_geom(g)
-    chain.geom = g
+    return {"type": "rect", **rr}, g, err
+
+
+def _fit_closed_primitive(chain, S, opts):
+    """Assign chain.prim / chain.geom if the closed chain is a primitive. Returns True on success."""
+    res = choose_closed_primitive(S, opts)
+    if res is None:
+        return False
+    chain.prim, chain.geom, _ = res
     return True
 
 
@@ -669,6 +770,7 @@ def fit_chain(chain, opts, ctx=None):
                 w = np.minimum(1.0, np.minimum(i, len(disp) + 1 - i) / float(tp))
                 disp = disp * w[:, None]
             S[1:-1] = S[1:-1] + disp
+    chain.samples = S
     tol = opts.get("fit_tol", 0.6)
     line_tol = opts.get("line_tol", 0.65)
     sig = opts.get("smooth_sigma", 1.0)

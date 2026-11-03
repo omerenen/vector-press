@@ -282,3 +282,49 @@ explodes on DALL-E textures (painterly shading, generator noise, fine fake detai
 Our lead over VTracer on the target set is therefore small (0.702 vs 0.680) — the key target problem is a segmentation /
 palette stage that turns textured AI art into clean, compact, print/cut-ready regions (→ stream B). Cut preset: overlap
 ≈ 0 by construction, but still ~1 800 paths and ~300 KB for a cut file (same root cause).
+
+## Phase 2 — stream A (primitives, corners, geometry validity)
+
+Scope: `vectorizer/pipeline/fit.py`, `boundary.py`, emission parts of `assemble.py`, new `vectorizer/pipeline/primfit.py`.
+Baseline = unchanged `phase2-base` code (`A_base`, `A_base_small`). Analysis scripts (not committed, /tmp/claude-0/A):
+per-primitive failure classifier (`analyze_prims.py`: finds the region loop that best matches each GT primitive outline,
+incl. the ±sw/2 stroke edges, and classifies why the metric did not match), self-intersection classifier
+(`svg_selfx.py`, `selfx.py`), corner metric decomposition (`corner_eval.py`, `corner_floor.py`).
+
+### A-1 Diagnosis: primitive recovery (before any code change)
+dev: 122 GT primitives (111 of them are stroked diagram boxes: 73 rect / 42 roundrect overall, plus 3 triangles,
+2 polygons, 1 star, 1 ellipse), base recovery 58/122 = **0.475**. Every one of the 64 failures classified:
+
+| failure class (dev, base) | n | what happens |
+|---|---|---|
+| split by junctions | **54** | the shape's outline is one loop of the region but consists of 2–20 chains. Diagram boxes: the thin box stroke is fragmented by JPEG/noise/AA into several colour regions (and connectors merge with the stroke), so the *fill* region's outline (= inner stroke edge, an exact GT target) gets junctions; flat shapes lying on top of other shapes get junctions where underlying edges touch. Chains are fitted one by one → no primitive, and straight edges carry extra junction vertices (polygon metric needs the exact vertex count) |
+| fit selected wrong radius ("prim on hole") | 4 | chain-level rect accepted but a sharp corner was fitted as r≈2.1–2.6 px (blur / JPEG chroma subsampling rounds the iso-contour of convex corners; apparent radius of a blurred sharp corner ≈1.9σ) or a roundrect radius +1.7 px too large |
+| fit rejected (single closed chain) | 6 | rect error just above `prim_tol` (bbox/hull initialisation pulled by 1–2 outlier samples), star with one undetected tip |
+| threshold too strict / metric matching / occlusion | 0 | — (the metric's ±sw/2 stroke offsets work; occluded shapes are not GT primitives) |
+
+proc2 (count only, no tuning; 157 primitives, base 0.293): split by junctions 81, no matching loop at all (segmentation
+merged/destroyed the shape) 17, fit rejected 9, prim-on-hole 4.
+
+### A-2 Diagnosis: corner error is mostly the metric's reference point
+`corner_err` = distance of the output's Harris maximum from the *nominal* GT vertex. The Harris response of a perfect
+corner peaks *inside* the corner (σ = 0.6 px window), and for diagram boxes the nominal vertex is the stroke centre line
+while the visible corners are the outer/inner stroke corners (sw/2·√2 away). Evaluating the GT render against itself
+(`corner_floor.py`): dev corner_err floor = **0.59 px** (flat_illustration), 0.44 (gradient), **1.15** (diagram), recall
+0.95–1.0. On dev_small the base output has official err 0.830 while the GT's own peak offset is 0.903; measured against
+the GT Harris peak instead (`err_peak`, proposed fix) the base error is **0.268 px** (diagram 0.350, flat 0.126).
+→ the target "corner_err ≤ 0.5 px" is below the metric's own floor; the localisation error of our corners is already
+≈0.27 px. Proposed metric fix (not applied, needs the lead): measure the error to the GT Harris peak in the same
+window (identical for all methods). What *is* improvable is recall (rounded/missing corners) — handled by A-3.
+
+### A-3 Region-level primitives (`region_prims`) + robust rect refinement (`rect_refine`)
+Approach (chosen among: (a) fit primitives to whole region loops and snap the shared chains, (b) clean the label map
+so strokes are not fragmented (stream B territory, and only helps diagrams), (c) fit primitives to open chains/arcs and
+merge — loses exactness at junctions): for every drawn region whose outer loop is made of ≥2 chains, concatenate the
+chains' fitting samples (sub-pixel shifted) and run the model selection on the whole loop (ellipse/circle, sharp rect,
+rounded rect, new straight-edged polygon model with greedy vertex removal = MDL-like selection, per-vertex penalty).
+Accepted → every chain of the loop is replaced by the exact piece of the primitive outline between its junctions, the
+junctions are projected onto the outline and moved for **all** incident chains (neighbours stay watertight, cut-consistent),
+conflicts (a chain/junction already snapped by another primitive) must agree within 0.35 px or the second one is
+rejected. Regions are emitted as `<rect>/<circle>/<ellipse>`, polygons as a subpath with only their vertices.
+Loops clipped by the canvas are skipped. `rect_refine`: soft-L1 IRLS Gauss–Newton refinement of the rect/rounded-rect
+fit (bbox/hull initialisation is pulled by junction bumps and JPEG specks).

@@ -74,6 +74,12 @@ def build_elements(lbl, palette_rgb, opts, timings=None, label_fill=None, ctx=No
         if (c.left >= 0 and drawn[c.left]) or (c.right >= 0 and drawn[c.right]):
             fit_chain(c, opts, ctx)
     timings["fit"] = time.perf_counter() - t
+    region_prims = {}
+    if opts.get("primitives", True) and opts.get("region_prims", True):
+        from .primfit import snap_region_primitives
+        t = time.perf_counter()
+        region_prims = snap_region_primitives(regions, chains, opts, drawn, shape=R.shape)
+        timings["region_prims"] = time.perf_counter() - t
     t = time.perf_counter()
     # region opacity from the input alpha (median over the region); < 0.98 -> fill-opacity
     opacity = np.ones(len(regions))
@@ -141,13 +147,18 @@ def build_elements(lbl, palette_rgb, opts, timings=None, label_fill=None, ctx=No
             loops = [r.outer] + ([] if r.fill_holes else [i for i in range(len(r.loops)) if i != r.outer])
             outer = r.loops[r.outer]
             prim = chains[outer[0][0]].prim if len(outer) == 1 else None
-            if len(loops) == 1 and prim is not None and opts.get("primitives", True):
+            prim = region_prims.get(r.rid, prim)
+            if len(loops) == 1 and prim is not None and prim["type"] != "polygon" and opts.get("primitives", True):
                 singles.append(_prim_element(prim, fill_attr, prec))
                 n_prims += 1
             else:
                 toks = []
                 for li in loops:
-                    toks += loop_d([oriented(cid, rev) for cid, rev in r.loops[li]], prec)
+                    if li == r.outer and prim is not None and prim["type"] == "polygon":
+                        toks += _polygon_tokens(prim["points"], prec)   # without collinear junction vertices
+                        n_prims += 1
+                    else:
+                        toks += loop_d([oriented(cid, rev) for cid, rev in r.loops[li]], prec)
                 fills.setdefault(fill_attr, [fill_attr, []])[1].extend(toks)
             if seam_w > 0 and not semi[r.rid] and not cutout:
                 for li in loops:
@@ -175,6 +186,11 @@ def build_elements(lbl, palette_rgb, opts, timings=None, label_fill=None, ctx=No
     timings["assemble"] = time.perf_counter() - t
     stats = {"n_regions": len(order), "n_chains": len(chains), "n_primitives": n_prims, "n_strokes": len(stroke_els)}
     return elements, stats
+
+
+def _polygon_tokens(points, prec):
+    g = {"start": tuple(points[0]), "segs": [("L", tuple(p)) for p in list(points[1:]) + [points[0]]]}
+    return loop_d([g], prec)
 
 
 def _prim_element(p, fill_attr, prec):
