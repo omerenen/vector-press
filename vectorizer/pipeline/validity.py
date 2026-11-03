@@ -19,15 +19,19 @@ import numpy as np
 from .fit import chain_samples, reverse_geom
 
 
-def flatten_geom(g, n_curve=8, n_arc=16):
-    """Points along a geometry dict (start included); arcs via the SVG endpoint parameterisation."""
+def flatten_geom(g, n_curve=8, n_arc=16, prec=2):
+    """Points along a geometry dict (start included); arcs via the SVG endpoint parameterisation.
+
+    Coordinates are rounded to `prec` decimals first (what the SVG will contain), so validity checks see the
+    written geometry (rounding can turn a 0.004 px gap into a collinear overlap)."""
     from .svgarc import arc_points
-    pts = [np.asarray(g["start"], float)]
+    q = (lambda v: np.round(np.asarray(v, float), prec)) if prec is not None else (lambda v: np.asarray(v, float))
+    pts = [q(g["start"])]
     cur = pts[0]
     for s in g["segs"]:
-        end = np.asarray(s[-1], float)
+        end = q(s[-1])
         if s[0] == "C":
-            c1, c2 = np.asarray(s[1], float), np.asarray(s[2], float)
+            c1, c2 = q(s[1]), q(s[2])
             t = np.linspace(0, 1, n_curve + 1)[1:, None]
             mt = 1 - t
             pts.extend(mt ** 3 * cur + 3 * mt * mt * t * c1 + 3 * mt * t * t * c2 + t ** 3 * end)

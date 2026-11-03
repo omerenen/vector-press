@@ -15,7 +15,8 @@ New behaviour is ON by default; every part has a flag in `vectorizer/api.py` DEF
 | `region_prim_max_shift` | 1.5 | – | max junction displacement onto a primitive (px) |
 | `rect_refine` | True | False | robust soft-L1 IRLS Gauss–Newton refinement of rect / rounded-rect fits (chain- and region-level) |
 | `blur_sharp_ratio` | 3.8 | 0 (off) | sharp vs rounded corners under blur: fitted radius < 3.8 × measured edge spread σ of the same rect → sharp model |
-| `geom_repair` | True | False | every emitted ring simple: pinch loops split, self-crossing / zero-area loops re-emitted as polylines (crossing chains only), leftovers as `make_valid` parts on the 0.01 grid; closing segment written in absolute coordinates, loops never end with an arc |
+| `geom_repair` | True | False | every emitted ring simple: pinch loops split, collapsed zero-area tiny loops not emitted, self-crossing loops re-fitted (crossing chains only: tighter Bézier, then polylines), leftovers as `make_valid` parts on the 0.01 grid; closing segment written in absolute coordinates, loops never end with an arc; primitives are not snapped if that would create an unrepairable crossing |
+| `repair_refit` | True | – | first repair level: tighter Bézier refit (fit_tol/2, no smoothing) before polylines |
 | `corner_lines` | False | – | line-pair (blur-robust) corner detector — measured, **rejected** (corner recall −0.10) |
 | `corner_blur_zone` | 2.0 | – | parameter of `corner_lines` |
 

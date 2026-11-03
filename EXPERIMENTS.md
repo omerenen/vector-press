@@ -405,3 +405,12 @@ graph-engine images go 379→0, 196→0, 140→0, 1→0), tiny islands +0.1 % ov
 526 self-crossing thin-stroke loops repaired with polylines; the thin strokes whose Bézier sides crossed now have their
 real, very small width and fall apart into sub-0.5 mm islands in the raster check; nodes +15 % on that image). Region
 primitives found 40 primitives on tdev_0021 (6 before).
+
+### A-9 Repair refinement after the target check
+tdev_0021 classification (base output): 317 of 379 non-simple subpaths are **zero-area collapsed tiny regions** (1–3 px
+regions between two junctions whose chains are fitted as the same line), 40 float-closing artefacts, 15 pinches, 7 real
+crossings. Re-emitting the collapsed regions as polylines gave them their real sub-pixel area → +23 % tiny islands and
++15 % nodes. Now loops whose *fitted* outline has |area| < 0.5 px² are simply not emitted (they were invisible before as
+well; the shared chains are left untouched). Tried before that: a tighter Bézier refit level (fit_tol/2, no smoothing)
+before the polyline levels — nodes −2 % only on tdev_0021, kept as the first repair level (`repair_refit`).
+tdev_0021: self-intersections 391 → 0, tiny islands 656 → 659, nodes 20 035 → 18 737 (vs. no repair).
