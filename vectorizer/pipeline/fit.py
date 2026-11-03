@@ -41,8 +41,8 @@ def turning(P, closed, L):
     n = len(P)
     s, total = _arclen(P, closed)
     if closed:
-        ext = np.concatenate([s - total, s, s + total])
-        Pe = np.vstack([P, P, P])
+        ext = np.concatenate([s - total, s, s + total, s + 2 * total])
+        Pe = np.vstack([P, P, P, P])
         i0 = np.searchsorted(ext, s + total - L)
         i1 = np.searchsorted(ext, s + total + L)
         i1 = np.minimum(i1, len(ext) - 1)
@@ -220,7 +220,7 @@ def _smooth(P, sigma, closed):
     return Q
 
 
-def fit_piece(P, tol, line_tol, smooth_sigma, t_start=None, t_end=None, line_tls=0.45):
+def fit_piece(P, tol, line_tol, smooth_sigma, t_start=None, t_end=None, line_tls=0.45, sagitta_tol=0.25):
     """Fit samples between two break points. Returns list of segments (without start point)."""
     a, b = P[0], P[-1]
     if len(P) <= 3 or _point_line_dist(P, a, b).max() <= line_tol:
@@ -228,9 +228,18 @@ def fit_piece(P, tol, line_tol, smooth_sigma, t_start=None, t_end=None, line_tls
     if line_tls and line_tls > 0 and len(P) >= 6:
         # total-least-squares line through the interior (end samples may sit off a true corner)
         c, d = _line_fit(P[1:-1])
-        res = np.abs((P[:, 0] - c[0]) * d[1] - (P[:, 1] - c[1]) * d[0])
+        v = (P[:, 0] - c[0]) * d[1] - (P[:, 1] - c[1]) * d[0]
+        res = np.abs(v)
         if res[1:-1].max() <= line_tls and res.max() <= 2 * line_tls:
             return [("L", tuple(b))]
+        if sagitta_tol > 0 and res[1:-1].max() <= line_tls + 0.2 and res.max() <= 2 * line_tls + 0.2:
+            # staircase noise vs real curvature: sagitta of a parabola fitted along the line
+            u = (P[:, 0] - c[0]) * d[0] + (P[:, 1] - c[1]) * d[1]
+            half = 0.5 * (u.max() - u.min())
+            if half > 1.0:
+                q = np.polyfit(u, v, 2)
+                if abs(q[0]) * half * half <= sagitta_tol:
+                    return [("L", tuple(b))]
     Q = _smooth(P, smooth_sigma, False)
     t1 = t_start if t_start is not None else _end_tangent(Q, True)
     t2 = t_end if t_end is not None else _end_tangent(Q, False)
@@ -436,6 +445,10 @@ def _fit_closed_primitive(chain, S, opts):
     cands = [c for c in cands if c[0] <= ptol]
     if not cands:
         return False
+    # an ellipse that fits about as well as a (fully) rounded rectangle is the simpler description
+    ell = [c for c in cands if c[1] == "ellipse"]
+    if ell:
+        cands = [(c[0] - 0.1, c[1], c[2]) if c[1] == "ellipse" else c for c in cands]
     err, kind, m = min(cands, key=lambda c: c[0])
     if kind == "ellipse":
         cx, cy, a, b, th = m
@@ -446,6 +459,11 @@ def _fit_closed_primitive(chain, S, opts):
         else:
             chain.prim = {"type": "ellipse", "cx": cx, "cy": cy, "rx": a, "ry": b, "angle": math.degrees(th)}
         chain.geom = ellipse_geom(m, _is_cw(S))
+        return True
+    if kind == "rrect" and m["r"] >= 0.47 * min(m["w"], m["h"]) and abs(m["w"] - m["h"]) < max(1.0, 0.02 * m["w"]):
+        r = (m["w"] + m["h"]) / 4                       # fully rounded square == circle
+        chain.prim = {"type": "circle", "cx": m["cx"], "cy": m["cy"], "r": r}
+        chain.geom = ellipse_geom((m["cx"], m["cy"], r, r, 0.0), _is_cw(S))
         return True
     rr = dict(m)
     if kind == "rect0":
@@ -554,13 +572,85 @@ def subpixel_offsets(pts, ctx, max_shift=0.7, min_contrast=0.05):
     return disp
 
 
+def _short_chain_geom(S, tol):
+    """Tiny open chains: one straight line, or two if the middle bulges (pure Python, fast)."""
+    p0, p1 = S[0], S[-1]
+    dx, dy = p1[0] - p0[0], p1[1] - p0[1]
+    L = math.hypot(dx, dy)
+    best, bi = 0.0, -1
+    if L > 1e-9:
+        for i in range(1, len(S) - 1):
+            d = abs((S[i][0] - p0[0]) * dy - (S[i][1] - p0[1]) * dx) / L
+            if d > best:
+                best, bi = d, i
+    if best > tol and bi > 0:
+        return {"start": (float(p0[0]), float(p0[1])),
+                "segs": [("L", (float(S[bi][0]), float(S[bi][1]))), ("L", (float(p1[0]), float(p1[1])))]}
+    return {"start": (float(p0[0]), float(p0[1])), "segs": [("L", (float(p1[0]), float(p1[1])))]}
+
+
+def subpixel_field(ctx, max_shift=0.7, min_contrast=0.05):
+    """Edge displacement for every crack of the image at once (see subpixel_offsets).
+
+    Returns (dh, dv): dh[y, x] = shift along +y of the horizontal crack between pixel rows
+    y-1 and y at column x; dv[y, x] = shift along +x of the vertical crack between columns
+    x-1 and x at row y. Zero where not applicable."""
+    lab, R, rl, pal = ctx["lab"], ctx["R"], ctx["region_label"], ctx["pal_lab"]
+    H, W = R.shape
+    skip = np.zeros(len(pal) + 1, bool)
+    for k in (ctx.get("skip_labels") or ()):
+        if 0 <= k < len(pal):
+            skip[k] = True
+    Lr = rl[R]                                            # palette label per pixel
+    dh = np.zeros((H + 1, W))
+    dv = np.zeros((H, W + 1))
+    if len(pal) == 0:
+        return dh, dv
+
+    def one(p0, p1, p2, p3):                              # each: (R, L, lab) arrays of the 4 profile pixels
+        (r0, l0, c0), (r1, l1, c1), (r2, l2, c2), (r3, l3, c3) = p0, p1, p2, p3
+        good = (r0 == r1) & (r3 == r2) & (r1 != r2) & (l1 >= 0) & (l2 >= 0)
+        good &= ~skip[np.maximum(l1, 0)] & ~skip[np.maximum(l2, 0)]
+        ca, cb = pal[np.maximum(l1, 0)], pal[np.maximum(l2, 0)]
+        d = cb - ca
+        L2 = (d * d).sum(-1)
+        good &= L2 >= min_contrast ** 2
+        Ls = np.maximum(L2, 1e-9)
+        e = 0.0
+        for c in (c0, c1, c2, c3):
+            e = e + np.clip(1.0 - ((c - ca) * d).sum(-1) / Ls, 0.0, 1.0)
+        return np.where(good, np.clip(e - 2.0, -max_shift, max_shift), 0.0)
+
+    if H >= 4:
+        sl = lambda y0, y1: (R[y0:y1], Lr[y0:y1], lab[y0:y1])  # noqa: E731
+        dh[2:H - 1] = one(sl(0, H - 3), sl(1, H - 2), sl(2, H - 1), sl(3, H))
+    if W >= 4:
+        sc = lambda x0, x1: (R[:, x0:x1], Lr[:, x0:x1], lab[:, x0:x1])  # noqa: E731
+        dv[:, 2:W - 1] = one(sc(0, W - 3), sc(1, W - 2), sc(2, W - 1), sc(3, W))
+    return dh, dv
+
+
+def _chain_disp(pts, field):
+    dh, dv = field
+    a, b = pts[:-1], pts[1:]
+    horiz = a[:, 1] == b[:, 1]
+    x = np.minimum(a[:, 0], b[:, 0]).astype(np.int64)
+    y = np.minimum(a[:, 1], b[:, 1]).astype(np.int64)
+    disp = np.zeros((len(a), 2))
+    h = horiz
+    disp[h, 1] = dh[y[h], x[h]]
+    v = ~horiz
+    disp[v, 0] = dv[y[v], x[v]]
+    return disp
+
+
 def fit_chain(chain, opts, ctx=None):
     """Populate chain.geom (and chain.prim for closed primitive chains)."""
     pts = chain.pts
     closed = chain.closed
     S = chain_samples(pts, closed)
     if ctx is not None and len(pts) >= 3:
-        disp = subpixel_offsets(pts, ctx)
+        disp = _chain_disp(pts, ctx["field"]) if "field" in ctx else subpixel_offsets(pts, ctx)
         if closed:
             S = S + disp
         else:
@@ -569,8 +659,8 @@ def fit_chain(chain, opts, ctx=None):
     line_tol = opts.get("line_tol", 0.65)
     sig = opts.get("smooth_sigma", 1.0)
     n = len(S)
-    if not closed and n <= 4:
-        chain.geom = {"start": tuple(pts[0]), "segs": [("L", tuple(pts[-1]))]}
+    if not closed and len(pts) <= opts.get("short_chain", 8):
+        chain.geom = _short_chain_geom(S, opts.get("line_tol", 0.65))
         return
     if closed and opts.get("primitives", True) and n >= 12:
         if _fit_closed_primitive(chain, S, opts):
@@ -599,7 +689,7 @@ def fit_chain(chain, opts, ctx=None):
     pieces = []
     for a_, b_ in zip(corners[:-1], corners[1:]):
         P = S[a_:b_ + 1]
-        pieces.append(fit_piece(P, tol, line_tol, sig, line_tls=opts.get("line_tls", 0.45)))
+        pieces.append(fit_piece(P, tol, line_tol, sig, line_tls=opts.get("line_tls", 0.45), sagitta_tol=opts.get("sagitta_tol", 0.25)))
     # corner refinement: intersect adjacent straight pieces
     vertices = [S[c].copy() for c in corners]
     if opts.get("refine_corners", True):

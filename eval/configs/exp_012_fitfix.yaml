@@ -1,0 +1,4 @@
+name: exp_012_fitfix
+description: exp_011 + fixes found by unit tests (closed-chain turning-angle wrap bug produced a spurious corner at every loop start; parabola-sagitta straight-line test; fully rounded squares -> circles; empty-image guard) + user option mapping.
+method: pipeline
+params: {engine: graph, preset: auto}

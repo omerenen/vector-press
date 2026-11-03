@@ -118,49 +118,70 @@ def _eval_stops(t, stops):
 
 
 def fit_group(xy, rgb):
-    """Fit linear and radial gradients to pixels (xy: (n,2) pixel centres, rgb float 0..255).
+    """Fit linear, circular-radial and elliptical-radial gradients to pixels.
 
-    Returns (kind, params, stops, rms_lab) of the better model.
+    xy: (n,2) pixel centres, rgb: (n,3) float 0..255. Returns (kind, params, stops, rms_lab, pred_lab)
+    of the best model or None.
     """
     n = len(xy)
-    A = np.column_stack([np.ones(n), xy])
-    coef, *_ = np.linalg.lstsq(A, rgb, rcond=None)
-    G = coef[1:].T                                     # (3, 2) colour gradient per channel
-    u, s, vt = np.linalg.svd(G)
-    d = vt[0]
     lab_true = rgb8_to_oklab(rgb)
     res = []
-    # linear
+    A = np.column_stack([np.ones(n), xy])
+    coef, *_ = np.linalg.lstsq(A, rgb, rcond=None)
+    G = coef[1:].T
+    _, _, vt = np.linalg.svd(G)
+    d = vt[0]
+
+    def score(tn):
+        st = _profile_stops(tn, rgb)
+        pred = rgb8_to_oklab(_eval_stops(tn, st))
+        err = np.sqrt(((pred - lab_true) ** 2).sum(-1))
+        return st, float(np.sqrt((err ** 2).mean())), err
+
     t = xy @ d
     t0, t1 = t.min(), t.max()
     if t1 - t0 > 1e-6:
-        tn = (t - t0) / (t1 - t0)
-        st = _profile_stops(tn, rgb)
-        pred = _eval_stops(tn, st)
-        rms = float(np.sqrt(((rgb8_to_oklab(pred) - lab_true) ** 2).sum(-1).mean()))
-        p0 = d * t0
-        p1 = d * t1
-        # make points lie on the line through the region centre
+        st, rms, err = score((t - t0) / (t1 - t0))
         ctr = xy.mean(0)
         off = ctr - d * (ctr @ d)
-        res.append(("linear", (p0 + off, p1 + off), st, rms))
-    # radial: quadratic luminance model for the centre
+        res.append(("linear", (d * t0 + off, d * t1 + off), st, rms, err))
+    # elliptical / circular radial from a quadratic luminance model
     L = lab_true[:, 0]
-    Q = np.column_stack([np.ones(n), xy, (xy ** 2).sum(1)])
+    x, y = xy[:, 0] - xy[:, 0].mean(), xy[:, 1] - xy[:, 1].mean()
+    Q = np.column_stack([np.ones(n), x, y, x * x, y * y, x * y])
     q, *_ = np.linalg.lstsq(Q, L, rcond=None)
-    if abs(q[3]) > 1e-9:
-        cx, cy = -q[1] / (2 * q[3]), -q[2] / (2 * q[3])
-        lo, hi = xy.min(0), xy.max(0)
-        span = hi - lo
-        if lo[0] - span[0] <= cx <= hi[0] + span[0] and lo[1] - span[1] <= cy <= hi[1] + span[1]:
-            r = np.sqrt(((xy - [cx, cy]) ** 2).sum(1))
-            R = r.max()
-            if R > 1:
-                tn = r / R
-                st = _profile_stops(tn, rgb)
-                pred = _eval_stops(tn, st)
-                rms = float(np.sqrt(((rgb8_to_oklab(pred) - lab_true) ** 2).sum(-1).mean()))
-                res.append(("radial", (np.array([cx, cy]), R), st, rms))
+    Mq = np.array([[q[3], q[5] / 2], [q[5] / 2, q[4]]])
+    ev = np.linalg.eigvalsh(Mq)
+    if np.all(ev > 1e-12) or np.all(ev < -1e-12):
+        try:
+            c = -0.5 * np.linalg.solve(Mq, q[1:3])
+        except np.linalg.LinAlgError:
+            c = None
+        if c is not None:
+            cx, cy = c + xy.mean(0)
+            lo, hi = xy.min(0), xy.max(0)
+            span = hi - lo
+            if lo[0] - span[0] <= cx <= hi[0] + span[0] and lo[1] - span[1] <= cy <= hi[1] + span[1]:
+                M = Mq / np.sign(ev[0])
+                w, V = np.linalg.eigh(M)
+                ratio = float(np.sqrt(w.max() / w.min()))
+                dxy = xy - [cx, cy]
+                for kind in (("radial",) if ratio < 1.05 else ("radial", "eradial")):
+                    if kind == "radial":
+                        r = np.sqrt((dxy ** 2).sum(1))
+                        R = r.max()
+                        if R > 1:
+                            st, rms, err = score(r / R)
+                            res.append(("radial", (np.array([cx, cy]), R), st, rms, err))
+                    else:
+                        u = dxy @ V                                    # principal axes
+                        r = np.sqrt(w[0] * u[:, 0] ** 2 + w[1] * u[:, 1] ** 2)
+                        R = r.max()
+                        if R > 1e-9:
+                            ax = R / np.sqrt(w)                        # semi-axes at t = 1
+                            ang = float(np.degrees(np.arctan2(V[1, 0], V[0, 0])))
+                            st, rms, err = score(r / R)
+                            res.append(("eradial", (np.array([cx, cy]), ax, ang), st, rms, err))
     if not res:
         return None
     return min(res, key=lambda r: r[3])
@@ -173,6 +194,11 @@ def gradient_defs(gid, kind, params, stops, prec=2):
         (x1, y1), (x2, y2) = params
         return (f'<linearGradient id="{gid}" gradientUnits="userSpaceOnUse" x1="{fmt(x1, prec)}" y1="{fmt(y1, prec)}" '
                 f'x2="{fmt(x2, prec)}" y2="{fmt(y2, prec)}">{st}</linearGradient>')
+    if kind == "eradial":
+        (cx, cy), (a, b), ang = params
+        return (f'<radialGradient id="{gid}" gradientUnits="userSpaceOnUse" cx="0" cy="0" r="1" '
+                f'gradientTransform="translate({fmt(cx, prec)} {fmt(cy, prec)}) rotate({fmt(ang, 2)}) '
+                f'scale({fmt(a, prec)} {fmt(b, prec)})">{st}</radialGradient>')
     (cx, cy), R = params
     return (f'<radialGradient id="{gid}" gradientUnits="userSpaceOnUse" cx="{fmt(cx, prec)}" cy="{fmt(cy, prec)}" '
             f'r="{fmt(R, prec)}">{st}</radialGradient>')
@@ -185,6 +211,8 @@ def apply_gradients(rgb, lbl, pal_lab, opts):
     """
     from .boundary import label_regions
     H, W = lbl.shape
+    if not (lbl >= 0).any() or len(pal_lab) == 0:
+        return lbl, pal_lab, {}, []
     lab = rgb8_to_oklab(rgb)
     R, rl = label_regions(lbl)
     n = len(rl)
@@ -211,25 +239,37 @@ def apply_gradients(rgb, lbl, pal_lab, opts):
         regs = np.nonzero(gid_of_region == g)[0]
         if not drawn[regs].all():
             continue
-        if area[regs].sum() < opts.get("grad_min_area", 64):
+        fit = None
+        for _it in range(4):
+            if len(regs) < 1 or area[regs].sum() < opts.get("grad_min_area", 64):
+                break
+            mask = np.isin(R, regs)
+            ys, xs = yy[mask], xx[mask]
+            if len(ys) > 40000:
+                sel = np.sort(np.random.default_rng(0).choice(len(ys), 40000, replace=False))
+            else:
+                sel = np.arange(len(ys))
+            xy = np.column_stack([xs[sel] + 0.5, ys[sel] + 0.5]).astype(np.float64)
+            cols = rgbf[ys[sel], xs[sel]]
+            f = fit_group(xy, cols)
+            if f is None:
+                break
+            band = pal_lab[lbl[ys[sel], xs[sel]]]
+            rms_band = float(np.sqrt(((band - rgb8_to_oklab(cols)) ** 2).sum(-1).mean()))
+            if f[3] <= tol and f[3] <= opts.get("grad_vs_band", 1.1) * rms_band:
+                fit = f
+                break
+            # drop member regions that the model explains badly, then refit
+            rid = R[ys[sel], xs[sel]]
+            err = f[4]
+            per = np.array([err[rid == r].mean() if (rid == r).any() else 0.0 for r in regs])
+            keep = per <= max(tol, np.median(per) * 1.5)
+            if keep.all() or keep.sum() == 0:
+                break
+            regs = regs[keep]
+        if fit is None or len(regs) < opts.get("grad_min_bands", 2):
             continue
-        mask = np.isin(R, regs)
-        ys, xs = yy[mask], xx[mask]
-        if len(ys) > 40000:
-            sel = np.random.default_rng(0).choice(len(ys), 40000, replace=False)
-        else:
-            sel = slice(None)
-        xy = np.column_stack([xs[sel] + 0.5, ys[sel] + 0.5]).astype(np.float64)
-        cols = rgbf[ys[sel], xs[sel]]
-        fit = fit_group(xy, cols)
-        if fit is None:
-            continue
-        kind, params, stops, rms = fit
-        # banded error (current palette representation)
-        band = pal_lab[lbl[ys[sel], xs[sel]]]
-        rms_band = float(np.sqrt(((band - rgb8_to_oklab(cols)) ** 2).sum(-1).mean()))
-        if rms > tol or rms > 0.85 * rms_band:
-            continue
+        kind, params, stops, rms, _err = fit
         gcount += 1
         gid = f"g{gcount}"
         defs.append(gradient_defs(gid, kind, params, stops, int(opts.get("precision", 2))))

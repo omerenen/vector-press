@@ -341,16 +341,11 @@ def remove_slivers(lbl, lab, pal, radius=0.045, max_thick=1.6, max_area_frac=0.0
     main neighbours (AA / JPEG bands along an edge). Pixels go to the nearer neighbour colour."""
     H, W = lbl.shape
     st = ndi.generate_binary_structure(2, 1)
-    comp = np.zeros(lbl.shape, np.int32)
-    nxt = 0
-    clab = []
-    for k in np.unique(lbl):
-        if k < 0:
-            continue
-        c, n = ndi.label(lbl == k, structure=st)
-        comp[c > 0] = c[c > 0] + nxt
-        clab.extend([int(k)] * n)
-        nxt += n
+    from .boundary import label_regions
+    R0, rl0 = label_regions(lbl)
+    comp = np.where(lbl >= 0, R0 + 1, 0).astype(np.int32)
+    clab = rl0.tolist()
+    nxt = len(rl0)
     if nxt == 0:
         return lbl
     area = np.bincount(comp.ravel(), minlength=nxt + 1).astype(np.float64)
@@ -403,60 +398,47 @@ def remove_slivers(lbl, lab, pal, radius=0.045, max_thick=1.6, max_area_frac=0.0
 
 
 def merge_small_regions(lbl, pal, min_area, passes=3, connectivity=4):
-    """Merge connected components with area < min_area into the most similar adjacent label."""
+    """Merge 4-connected components with area < min_area into the most similar adjacent label
+    (ties broken towards the longer shared border). Fully vectorised."""
     if min_area <= 1:
         return lbl
-    st = ndi.generate_binary_structure(2, 1 if connectivity == 4 else 2)
-    H, W = lbl.shape
+    from .boundary import label_regions
     for _ in range(passes):
-        changed = False
-        comp = np.zeros(lbl.shape, np.int32)
-        nxt = 0
-        for k in np.unique(lbl):
-            if k == TRANSPARENT:
-                continue
-            c, n = ndi.label(lbl == k, structure=st)
-            comp[c > 0] = c[c > 0] + nxt
-            nxt += n
-        if nxt == 0:
+        R, rlab = label_regions(lbl)
+        n = len(rlab)
+        area = np.bincount(R.ravel(), minlength=n)
+        small = (area < min_area) & (rlab >= 0)
+        if not small.any():
             break
-        areas = np.bincount(comp.ravel(), minlength=nxt + 1)
-        small = np.nonzero((areas < min_area) & (np.arange(nxt + 1) > 0))[0]
-        if len(small) == 0:
+        keys, cnts = [], []
+        for a, b in ((R[:, :-1], R[:, 1:]), (R[:-1], R[1:])):
+            for x, y in ((a, b), (b, a)):
+                m = (x != y) & small[x]
+                if m.any():
+                    ly = rlab[y[m]]
+                    ok = ly >= 0
+                    keys.append(x[m][ok].astype(np.int64) * (len(pal) + 1) + ly[ok])
+        if not keys:
             break
-        slices = ndi.find_objects(comp)
-        # process small components smallest first
-        small = small[np.argsort(areas[small])]
-        for cid in small:
-            sl = slices[cid - 1]
-            if sl is None:
-                continue
-            y0, y1 = max(0, sl[0].start - 1), min(H, sl[0].stop + 1)
-            x0, x1 = max(0, sl[1].start - 1), min(W, sl[1].stop + 1)
-            sub = comp[y0:y1, x0:x1] == cid
-            if not sub.any():
-                continue
-            ring = ndi.binary_dilation(sub, structure=st) & ~sub
-            nb = lbl[y0:y1, x0:x1][ring]
-            nb = nb[nb != TRANSPARENT]
-            own = lbl[y0:y1, x0:x1][sub][0]
-            nb = nb[nb != own]
-            if len(nb) == 0:
-                continue
-            u, cnt = np.unique(nb, return_counts=True)
-            d = np.sqrt(((pal[u] - pal[own]) ** 2).sum(-1))
-            score = d - 0.002 * cnt  # prefer similar colour, then longer shared border
-            tgt = u[np.argmin(score)]
-            lbl[y0:y1, x0:x1][sub] = tgt
-            comp[y0:y1, x0:x1][sub] = 0
-            changed = True
-        if not changed:
-            break
+        k = np.concatenate(keys)
+        uk, cnt = np.unique(k, return_counts=True)
+        comp, tl = uk // (len(pal) + 1), uk % (len(pal) + 1)
+        d = np.sqrt(((pal[tl] - pal[rlab[comp]]) ** 2).sum(-1))
+        score = d - 0.002 * cnt
+        o = np.lexsort((score, comp))
+        comp_o, tl_o = comp[o], tl[o]
+        first = np.ones(len(comp_o), bool)
+        first[1:] = comp_o[1:] != comp_o[:-1]
+        target = np.full(n, -2, np.int64)
+        target[comp_o[first]] = tl_o[first]
+        # process the smallest half first to avoid two small neighbours swapping into each other
+        move = target >= 0
+        lbl = np.where(move[R], target[R], lbl).astype(np.int32)
     return lbl
 
 
 def quantize(rgb, alpha, radius=0.045, max_colors=64, min_area=None, window=2, alpha_threshold=128,
-             thin_lines=True, mix_suppress=True, slivers=True, merge_frac=0.6, denoise=0):
+             thin_lines=True, mix_suppress=True, slivers=True, merge_frac=0.6, denoise=0, min_area_scale=1.0):
     """Return (labels HxW int32 with -1 transparent, palette_rgb (K,3) float, palette_lab, info dict)."""
     H, W, _ = rgb.shape
     lab = rgb8_to_oklab(rgb)
@@ -474,7 +456,7 @@ def quantize(rgb, alpha, radius=0.045, max_colors=64, min_area=None, window=2, a
     if thin_lines in (True, "bridge", "both"):
         lbl = bridge_saddles(lbl, lab, pal)
     if min_area is None:
-        min_area = int(np.clip(round(H * W / 25000), 3, 40))
+        min_area = int(np.clip(round(H * W / 25000 * min_area_scale), 3 if min_area_scale >= 1 else 2, 400))
     lbl = merge_small_regions(lbl, pal, min_area)
     if slivers:
         lbl = remove_slivers(lbl, lab, pal, radius)

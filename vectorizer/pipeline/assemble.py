@@ -63,14 +63,24 @@ def build_elements(lbl, palette_rgb, opts, timings=None, label_fill=None, ctx=No
     t = time.perf_counter()
     drawn = np.array([r.label >= 0 for r in regions], bool)
     if ctx is not None:
+        from .fit import subpixel_field
         ctx = dict(ctx, R=R, region_label=rl)
+        ctx["field"] = subpixel_field(ctx)
     for c in chains:
         if (c.left >= 0 and drawn[c.left]) or (c.right >= 0 and drawn[c.right]):
             fit_chain(c, opts, ctx)
     timings["fit"] = time.perf_counter() - t
     t = time.perf_counter()
     depth = _containment(regions, R, lbl)
-    order = sorted([r for r in regions if r.label >= 0 and r.loops],
+    converted, stroke_els = set(), []
+    if opts.get("centerline"):
+        from .centerline import centerline_regions
+        tc = time.perf_counter()
+        converted, stroke_els = centerline_regions(R, rl, regions, palette_rgb, opts, label_fill)
+        timings["centerline"] = time.perf_counter() - tc
+        for rid in converted:
+            drawn[rid] = False
+    order = sorted([r for r in regions if r.label >= 0 and r.loops and r.rid not in converted],
                    key=lambda r: (depth[r.rid], -r.loop_area[r.outer], r.rid))
     rev_cache = {}
 
@@ -133,8 +143,9 @@ def build_elements(lbl, palette_rgb, opts, timings=None, label_fill=None, ctx=No
             elements.append(f'<path {attr} d="{_join(toks)}"/>')
         elements.extend(singles)
         level_start = level_end
+    elements.extend(stroke_els)
     timings["assemble"] = time.perf_counter() - t
-    stats = {"n_regions": len(order), "n_chains": len(chains), "n_primitives": n_prims}
+    stats = {"n_regions": len(order), "n_chains": len(chains), "n_primitives": n_prims, "n_strokes": len(stroke_els)}
     return elements, stats
 
 

@@ -2,4 +2,4 @@ name: exp_009_oracle
 description: Same presets as exp_009 but chosen from the true category (upper bound for the classifier).
 method: pipeline
 params: {engine: graph}
-oracle_preset: {icon: icon, logo: logo, flat_illustration: logo, line_art: line_art, diagram: diagram, gradient: gradient, photo: photo_posterize}
+oracle_preset: {icon: icon, logo: logo, flat_illustration: logo, line_art: line_art, diagram: diagram, gradient: gradient, photo: photo}

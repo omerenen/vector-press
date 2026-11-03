@@ -1,0 +1,57 @@
+{
+ "config": {
+  "name": "abl_012_photo_vt",
+  "description": "exp_011 + fixes found by unit tests (closed-chain turning-angle wrap bug produced a spurious corner at every loop start; parabola-sagitta straight-line test; fully rounded squares -> circles; empty-image guard) + user option mapping.",
+  "method": "pipeline",
+  "params": {
+   "engine": "vtracer",
+   "preset": "auto"
+  }
+ },
+ "split": "dev",
+ "wall_s": 6.661657333374023,
+ "summary": {
+  "ALL": {
+   "n": 10,
+   "valid_rate": 1.0,
+   "composite": 0.6958025136642207,
+   "ssim": 0.7591477535065281,
+   "ssim_in": 0.7689552779718752,
+   "psnr": 25.540703594278913,
+   "msssim": 0.9175099551588026,
+   "gmsd": 0.11821499358479828,
+   "de_mean": 3.58819877627617,
+   "de_p95": 10.578869995363052,
+   "edge_f": 0.7917312511010659,
+   "n_paths": 735.4,
+   "n_nodes": 10517.6,
+   "n_primitives": 0.0,
+   "bytes": 418906.4,
+   "gz_bytes": 144171.8,
+   "time": 1.8946593260001463,
+   "time_median": 1.7450213639995127,
+   "time_p95": 3.6514487552002706
+  },
+  "photo": {
+   "n": 10,
+   "valid_rate": 1.0,
+   "composite": 0.6958025136642207,
+   "ssim": 0.7591477535065281,
+   "ssim_in": 0.7689552779718752,
+   "psnr": 25.540703594278913,
+   "msssim": 0.9175099551588026,
+   "gmsd": 0.11821499358479828,
+   "de_mean": 3.58819877627617,
+   "de_p95": 10.578869995363052,
+   "edge_f": 0.7917312511010659,
+   "n_paths": 735.4,
+   "n_nodes": 10517.6,
+   "n_primitives": 0.0,
+   "bytes": 418906.4,
+   "gz_bytes": 144171.8,
+   "time": 1.8946593260001463,
+   "time_median": 1.7450213639995127,
+   "time_p95": 3.6514487552002706
+  }
+ }
+}

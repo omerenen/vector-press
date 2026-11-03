@@ -40,19 +40,16 @@ class Region:
 
 
 def label_regions(lbl):
-    """4-connected components of each label (including transparent -1). Returns (R, labels_of_region)."""
-    H, W = lbl.shape
-    R = np.full((H, W), -1, np.int32)
-    st = ndi.generate_binary_structure(2, 1)
-    nxt = 0
-    region_label = []
-    for k in np.unique(lbl):
-        c, n = ndi.label(lbl == k, structure=st)
-        m = c > 0
-        R[m] = c[m] - 1 + nxt
-        region_label.extend([int(k)] * n)
-        nxt += n
-    return R, np.array(region_label, np.int32)
+    """4-connected components of equal labels (including transparent -1), one C pass.
+
+    Returns (R, labels_of_region) with region ids 0..n-1."""
+    from skimage.measure import label as sklabel
+    C = sklabel(lbl.astype(np.int32), background=-(2 ** 30), connectivity=1)
+    n = int(C.max())
+    R = (C - 1).astype(np.int32)
+    region_label = np.zeros(n, np.int32)
+    region_label[R.ravel()] = lbl.ravel()
+    return R, region_label
 
 
 def build_graph(R):

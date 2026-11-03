@@ -1,0 +1,4 @@
+# Optional: LPIPS metric in the evaluation harness (needs AlexNet weights in the torch cache;
+# download.pytorch.org must be reachable once). Not needed for the vectoriser itself.
+torch
+lpips==0.1.4

@@ -1,0 +1,101 @@
+{
+ "config": {
+  "name": "abl_011_ref",
+  "description": "exp_010 (auto presets, denoise 1) + sub-pixel boundary placement from anti-aliasing coverage (4-px profile unmixing per crack).",
+  "method": "pipeline",
+  "params": {
+   "engine": "graph",
+   "preset": "auto"
+  }
+ },
+ "split": "dev",
+ "wall_s": 74.17330980300903,
+ "summary": {
+  "ALL": {
+   "n": 40,
+   "valid_rate": 1.0,
+   "composite": 0.8943247174645903,
+   "ssim": 0.9773038381040049,
+   "ssim_in": 0.9405263030201022,
+   "psnr": 28.843126574557836,
+   "msssim": 0.9846772406093127,
+   "gmsd": 0.07028381994100619,
+   "de_mean": 1.372658156371097,
+   "de_p95": 3.131701998668605,
+   "edge_f": 0.9751114993559691,
+   "edge_dev": 0.23875975849840764,
+   "mismatch4x": 0.01992051066616624,
+   "gap_px": 0.0,
+   "corner_recall": 0.8531250000000001,
+   "corner_err": 1.058387888107785,
+   "prim_recovery": 0.4463095238095239,
+   "n_paths": 25.325,
+   "n_nodes": 462.025,
+   "n_primitives": 16.2,
+   "bytes": 8518.225,
+   "gz_bytes": 3276.925,
+   "time": 1.2695157665000125,
+   "time_median": 1.1803597429998263,
+   "time_p95": 2.0155734592006405,
+   "prim_pooled": {
+    "rect": "33/71",
+    "roundrect": "17/40"
+   }
+  },
+  "line_art": {
+   "n": 20,
+   "valid_rate": 1.0,
+   "composite": 0.8963812860387399,
+   "ssim": 0.9769855388289995,
+   "ssim_in": 0.9672499173091961,
+   "psnr": 28.780339429679714,
+   "msssim": 0.9798979433573208,
+   "gmsd": 0.06972244904267803,
+   "de_mean": 1.5949688441840169,
+   "de_p95": 3.300341534005912,
+   "edge_f": 0.9743353561819422,
+   "edge_dev": 0.1967413248935299,
+   "mismatch4x": 0.01884954523113372,
+   "gap_px": 0.0,
+   "n_paths": 7.5,
+   "n_nodes": 416.5,
+   "n_primitives": 2.6,
+   "bytes": 7805.7,
+   "gz_bytes": 3208.65,
+   "time": 1.2684054350500447,
+   "time_median": 1.2551456589999361,
+   "time_p95": 2.0155734592006413
+  },
+  "diagram": {
+   "n": 20,
+   "valid_rate": 1.0,
+   "composite": 0.8922681488904404,
+   "ssim": 0.9776221373790104,
+   "ssim_in": 0.9138026887310085,
+   "psnr": 28.90591371943596,
+   "msssim": 0.9894565378613042,
+   "gmsd": 0.07084519083933434,
+   "de_mean": 1.1503474685581767,
+   "de_p95": 2.963062463331298,
+   "edge_f": 0.9758876425299956,
+   "edge_dev": 0.2807781921032853,
+   "mismatch4x": 0.020991476101198756,
+   "gap_px": 0.0,
+   "corner_recall": 0.8531250000000001,
+   "corner_err": 1.058387888107785,
+   "prim_recovery": 0.4463095238095239,
+   "n_paths": 43.15,
+   "n_nodes": 507.55,
+   "n_primitives": 29.8,
+   "bytes": 9230.75,
+   "gz_bytes": 3345.2,
+   "time": 1.2706260979499802,
+   "time_median": 1.1571321189994705,
+   "time_p95": 1.7273850270500137,
+   "prim_pooled": {
+    "rect": "33/71",
+    "roundrect": "17/40"
+   }
+  }
+ }
+}

@@ -21,6 +21,7 @@ DEFAULTS = dict(
     color_radius=0.045,      # OKLab merge radius for palette extraction (smaller = more colours)
     max_colors=64,
     min_area=None,           # speckle size in px (None = auto from image size)
+    min_area_scale=1.0,      # multiplier on the automatic speckle size
     fit_tol=0.6,             # Bezier fit tolerance (px)
     line_tol=0.65,           # straight-line snapping tolerance (px)
     corner_angle=55.0,       # corner sharpness threshold (deg)
@@ -28,10 +29,14 @@ DEFAULTS = dict(
     primitives=True,
     prim_tol=0.75,
     precision=2,
+    vtracer_params=None,     # dict of VTracer parameters for engine="vtracer_raw"
+    max_side=2048,           # larger inputs are processed at this size (SVG keeps the original size)
     seam_width=1.0,
     line_tls=0.45,           # straight-line test tolerance on TLS fit (px)
+    sagitta_tol=0.25,        # staircase-vs-curve test: max parabola sagitta for a straight line (px), 0 = off
     thin_lines="ridge",      # "ridge": rescue sub-pixel lines; "both": + bridge diagonal saddles (off: +33% bytes)
     denoise=1,               # edge-preserving sigma-filter iterations before quantisation (W1)
+    centerline=False,        # trace thin regions as stroked centre lines (W8)
     subpixel=True,           # move boundary samples to the anti-aliasing implied edge position
     gradients=True,          # fit linear/radial gradients to banded colour ramps (W6)
     grad_tol=0.03,           # max OKLab RMS residual for an accepted gradient
@@ -39,6 +44,9 @@ DEFAULTS = dict(
     merge_frac=0.6,          # palette colours closer than merge_frac*color_radius are merged            # remove thin AA/JPEG bands whose colour mixes their neighbours
     mix_suppress=False,      # drop palette colours explainable as AA mixtures (line_art/diagram presets)
 )
+
+
+MAX_MODE = dict(denoise=2)
 
 
 @dataclass
@@ -51,7 +59,38 @@ class Result:
             f.write(self.svg)
 
 
+USER_OPTIONS = ("colors", "detail", "corner_sharpness", "primitives", "gradients", "centerline")
+
+
+def _map_user_options(options: dict) -> dict:
+    """Translate the documented user-facing knobs into internal parameters."""
+    o = dict(options)
+    colors = o.pop("colors", None)
+    if colors not in (None, "auto"):
+        o.setdefault("max_colors", max(1, int(colors)))
+    detail = o.pop("detail", None)
+    if detail is not None:
+        d = float(min(max(detail, 0.0), 1.0))          # 0 = coarse, 1 = fine; 0.5 = defaults
+        o.setdefault("fit_tol", 0.6 * (2.0 ** (1.0 - 2.0 * d)))
+        o.setdefault("color_radius", 0.045 * (1.6 ** (1.0 - 2.0 * d)))
+        o.setdefault("min_area_scale", 2.0 ** (2.0 - 4.0 * d))
+    cs = o.pop("corner_sharpness", None)
+    if cs is not None:
+        c = float(min(max(cs, 0.0), 1.0))
+        o.setdefault("corner_angle", 80.0 - 50.0 * c)  # 0.5 -> 55 deg (default)
+    return o
+
+
 def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **options) -> Result:
+    """Vectorise a raster image.
+
+    image:  bytes, file path, PIL.Image or numpy array (H,W[,C]).
+    preset: "auto" (classifier) or one of vectorizer.presets.PRESETS.
+    mode:   "fast" (default) or "max" (slower, see README).
+    options (user-facing): colors (int|"auto"), detail (0..1), corner_sharpness (0..1),
+             primitives (bool), gradients (bool), centerline (bool); any internal key of DEFAULTS.
+    Returns Result(svg, stats) with stats: image_type, preset, timings per stage, sizes, counts.
+    """
     t_all = time.perf_counter()
     timings = {}
     t = time.perf_counter()
@@ -70,17 +109,32 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
         stats["image_type"] = None
     opts.update(preset_options(preset))
     stats["preset"] = preset
-    opts.update({k: v for k, v in options.items() if v is not None})
+    if mode == "max":
+        opts.update(MAX_MODE)
+    elif mode != "fast":
+        raise ValueError("mode must be 'fast' or 'max'")
+    opts.update({k: v for k, v in _map_user_options(options).items() if v is not None})
+    unknown = set(opts) - set(DEFAULTS)
+    if unknown:
+        raise TypeError(f"unknown option(s): {sorted(unknown)}")
     if H == 0 or W == 0:
         return Result(svg_document(max(W, 1), max(H, 1), ""), stats)
+    W0, H0 = W, H
+    if opts["max_side"] and max(H, W) > opts["max_side"]:
+        from PIL import Image as _Image
+        sc = opts["max_side"] / max(H, W)
+        W, H = max(1, int(round(W * sc))), max(1, int(round(H * sc)))
+        rgba = np.asarray(_Image.fromarray(rgba, "RGBA").resize((W, H), _Image.LANCZOS))
+        stats["processed_size"] = [W, H]
     if opts["engine"] == "vtracer_raw":
         t = time.perf_counter()
-        svg = vtracer_trace(rgba)
+        svg = vtracer_trace(rgba, **(opts["vtracer_params"] or {}))
         timings["vtracer"] = time.perf_counter() - t
     else:
         t = time.perf_counter()
         lbl, pal_rgb, pal_lab, qinfo, lab = quantize(rgba[..., :3], rgba[..., 3], radius=opts["color_radius"],
                                                 max_colors=opts["max_colors"], min_area=opts["min_area"],
+                                                min_area_scale=opts["min_area_scale"],
                                                 thin_lines=opts["thin_lines"], mix_suppress=opts["mix_suppress"],
                                                 slivers=opts["slivers"], merge_frac=opts["merge_frac"],
                                                 denoise=opts["denoise"])
@@ -106,7 +160,12 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
             els, est = build_elements(lbl, pal_rgb, opts, timings, label_fill=label_fill, ctx=ctx)
             stats.update(est)
             body = (f"<defs>{''.join(defs)}</defs>" if defs else "") + "".join(els)
-            svg = svg_document(W, H, body)
+            svg = svg_document(W, H, body, out_size=(W0, H0))
+    if (W, H) != (W0, H0) and opts["engine"] != "graph":
+        import re as _re
+        svg = _re.sub(r'<svg([^>]*?)width="[^"]*" height="[^"]*"', 
+                      lambda m: f'<svg{m.group(1)}viewBox="0 0 {W} {H}" width="{W0}" height="{H0}"', svg, count=1)
+    stats["width"], stats["height"] = W0, H0
     timings["total"] = time.perf_counter() - t_all
     stats["timings"] = timings
     stats["bytes"] = len(svg.encode())

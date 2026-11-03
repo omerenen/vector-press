@@ -1,0 +1,35 @@
+name: exp_001_baseline_tuned
+method: vtracer
+description: Plain VTracer with per-category parameters tuned by grid search on dev
+  (oracle category).
+params: {}
+per_category:
+  icon:
+    filter_speckle: 16
+    color_precision: 6
+    layer_difference: 32
+  logo:
+    filter_speckle: 8
+    color_precision: 7
+    layer_difference: 32
+  flat_illustration:
+    filter_speckle: 2
+    color_precision: 6
+    layer_difference: 16
+  line_art:
+    filter_speckle: 2
+    color_precision: 6
+    layer_difference: 32
+  diagram:
+    filter_speckle: 2
+    color_precision: 6
+    layer_difference: 32
+    corner_threshold: 30
+    length_threshold: 4.0
+  gradient: &id001
+    filter_speckle: 2
+    color_precision: 8
+    layer_difference: 8
+    corner_threshold: 30
+    length_threshold: 4.0
+  photo: *id001

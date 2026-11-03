@@ -1,0 +1,4 @@
+name: exp_014_photo
+description: exp_013 (vectorised merge, fast short chains, global sub-pixel field, max_side) + photo preset = VTracer with dev-tuned photo parameters (graph engine kept as photo_posterize).
+method: pipeline
+params: {preset: auto}

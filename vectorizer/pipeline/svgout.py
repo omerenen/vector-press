@@ -94,7 +94,8 @@ def loop_d(geoms, prec):
     return toks
 
 
-def svg_document(width, height, body, background=None):
+def svg_document(width, height, body, background=None, out_size=None):
     bg = f'<rect width="{width}" height="{height}" fill="{background}"/>' if background else ""
+    ow, oh = out_size if out_size else (width, height)
     return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" '
-            f'width="{width}" height="{height}">{bg}{body}</svg>')
+            f'width="{ow}" height="{oh}">{bg}{body}</svg>')

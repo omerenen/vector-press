@@ -139,6 +139,43 @@ low-contrast pairs (<0.05 OKLab) and gradient regions are skipped.
 Result vs exp_010: composite **0.901 (+0.006)**, PSNR +0.43, edge_dev −0.013, corner recall +0.020, corner err −0.022 px,
 primitive recovery 0.287→**0.382**, diagram +0.014 (PSNR +1.14 dB), icon +0.007; gradient/photo neutral. **Keep → best-v2.**
 
+## abl_011_centerline — W8 centre-line strokes (optional)
+Thin regions (max half-width ≤ 5 px) → skeleton (scikit-image) → polylines (spurs < width pruned) → line/Bézier fit →
+`stroke` paths with width = area / skeleton length; each region verified by rendering (IoU ≥ 0.75) else kept as fill.
+Result (line_art + diagram, dev): line_art composite 0.896→0.883, diagram 0.892→0.868, PSNR −1.5/−2.3 dB, bytes ≈ equal.
+Failure modes seen: variable-width strokes (procedural sketches) get one width; skeleton junctions leave small defects.
+Decision: **optional flag `centerline=True` (off by default)** — useful when the user wants editable strokes, not for fidelity.
+
+## exp_001_baseline_tuned — per-category VTracer grid search (dev, oracle category)
+Stage 1: filter_speckle {2,4,8,16} × color_precision {6,7,8} × layer_difference {8,16,32}; stage 2: corner_threshold
+{30,60,90,135} on each category's best (length_threshold sweep dropped for time, 3.5/4/6 made <0.002 difference where tried).
+Best per category in `eval/configs/exp_001_baseline_tuned.yaml`. Dev composite **0.8218** (defaults 0.8007);
+photo 0.7575 with color_precision 8 / layer_difference 8 (better than our region engine on photos at that time: 0.722).
+All later comparisons use this as "best baseline".
+
+## exp_012_fitfix — bugs found by the new unit tests
+`turning()` for closed chains ran off the end of the extended arclength array → every closed loop had a spurious corner at
+its last sample; parabola-sagitta straight-line test (staircase residual up to 0.45–0.5 px on true straight edges);
+fully rounded squares are emitted as circles; empty-palette guards. Composite 0.901→0.900 (sagitta test: −0.06 dB PSNR,
++0.007 corner recall, −2 % bytes; `abl_012_nosag` = 0.901). Kept for cleaner geometry (within tolerance).
+
+## exp_013_speed — vectorised speckle merge, one-pass component labelling, fast tiny chains, global sub-pixel field
+Composite **0.902 (+0.002)**, photo +0.008, median time −7 % (photo −38 %): processing all small components at once
+(instead of smallest-first) turned out slightly better as well.
+
+## exp_014_photo — photo preset = VTracer with tuned params; `max_side`
+Photos detected by the classifier go to plain VTracer (fs 2, cp 8, ld 8, ct 30) — faster (0.3 s) and higher fidelity than
+the region engine; the region engine remains as `photo_posterize` (≤640 px, 3× smaller files). Inputs larger than
+`max_side` (2048) are processed downscaled, output keeps the original size via viewBox. Dev composite 0.902,
+photo 0.747 (tuned baseline 0.758: two photos are classified as logo → region engine).
+
+## exp_015_grad2 — gradient robustness
+Iterative removal of member regions the model explains badly (a similar-coloured shape chained to a background ramp
+made the whole group fail → background stayed banded, dev_0079 edgeF 0.58), elliptical radial gradients via
+`gradientTransform` (bounding-box radial fills on non-square shapes), acceptance rms ≤ 1.1× banded rms (equal-error
+gradients look much better than contour bands). Gradient category 0.875→**0.881**, edgeF 0.819→0.842 (now above the
+tuned baseline 0.838), ΔE −0.11. Overall **0.904** → best-v3.
+
 ## Best versions (git tags cannot be pushed from this environment: HTTP 403 on refs/tags; recorded here instead)
 | tag | commit | dev composite | note |
 |---|---|---|---|
