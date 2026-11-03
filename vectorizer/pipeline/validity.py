@@ -86,12 +86,15 @@ def split_pinches(loop, chains):
     return [lp for lp in out if lp]
 
 
-def _polyline_geom(c, raw=False):
+def _polyline_geom(c, raw=False, simplify=0.25):
     pts = c.pts
     if raw or c.samples is None:
         S = chain_samples(pts, c.closed)
     else:
         S = c.samples
+        if simplify and len(S) > 4:
+            from shapely.geometry import LineString
+            S = np.asarray(LineString(S).simplify(simplify, preserve_topology=False).coords)
     if c.closed:
         return {"start": (float(S[0][0]), float(S[0][1])),
                 "segs": [("L", (float(x), float(y))) for x, y in S[1:]] + [("L", (float(S[0][0]), float(S[0][1])))]}
@@ -150,7 +153,10 @@ def repair_loops(loops, chains, max_rounds=10, prec=2):
             break
         changed = set()
         for li in bad:
+            culprits = _culprits(loops[li], fl)
             for cid, _ in loops[li]:
+                if culprits is not None and cid not in culprits:
+                    continue
                 c = chains[cid]
                 if c.snapped or c.prim is not None:
                     continue                 # exact primitive geometry: valid by construction
@@ -180,6 +186,41 @@ def repair_loops(loops, chains, max_rounds=10, prec=2):
     return stats, rings
 
 
+def _culprits(loop, fl):
+    """Chains of an invalid loop that take part in a crossing (pairwise / self tests); None = all
+    (zero-area loops and cases the pairwise test cannot localise)."""
+    from shapely.geometry import LineString, Point
+    if len(loop) < 2:
+        return None
+    lines = []
+    for cid, _ in loop:
+        P = fl(cid)
+        d = np.abs(np.diff(P, axis=0)).max(1) > 1e-9
+        P = np.vstack([P[:1], P[1:][d]])
+        lines.append(LineString(P) if len(P) >= 2 else None)
+    out = set()
+    for i, a in enumerate(lines):
+        if a is None:
+            continue
+        if not a.is_simple:
+            out.add(loop[i][0])
+        ea = [Point(a.coords[0]), Point(a.coords[-1])]
+        for j in range(i + 1, len(lines)):
+            b = lines[j]
+            if b is None or not a.intersects(b):
+                continue
+            inter = a.intersection(b)
+            if inter.geom_type in ("Point", "MultiPoint"):
+                pts = [inter] if inter.geom_type == "Point" else list(inter.geoms)
+                eb = [Point(b.coords[0]), Point(b.coords[-1])]
+                shared = [p for p in ea if any(p.distance(q) < 1e-7 for q in eb)]
+                if all(any(p.distance(q) < 1e-7 for q in shared) for p in pts):
+                    continue
+            out.add(loop[i][0])
+            out.add(loop[j][0])
+    return out or None
+
+
 def valid_parts(P, prec=2):
     """Valid polygon parts of a (self-crossing) ring as point rings oriented like P (exterior), holes reversed."""
     from shapely.geometry import Polygon
@@ -195,6 +236,7 @@ def valid_parts(P, prec=2):
         return []
     polys = []
     stack = [g]
+    min_area = 1.0                     # crossing lobes below 1 px^2 are fitting artefacts, not shape
     while stack:
         h = stack.pop()
         if h.geom_type == "Polygon":
@@ -202,6 +244,8 @@ def valid_parts(P, prec=2):
                 polys.append(h)
         elif hasattr(h, "geoms"):
             stack.extend(h.geoms)
+    if len(polys) > 1:
+        polys = [p for p in polys if p.area >= min_area] or [max(polys, key=lambda p: p.area)]
     out = []
     for p in polys:
         p = orient(p, sgn)

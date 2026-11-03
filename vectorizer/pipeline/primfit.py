@@ -285,6 +285,8 @@ def fit_polygon(S, opts, max_vertices=16):
         del cs[i]
     # 2) greedy vertex removal while the polygon still explains the samples
     cur = _poly_from_corners(S, cs, tol)
+    if cur is None and len(cs) > 8:
+        return None                      # not a polygon (cost guard: greedy search is O(corners^2))
     while len(cs) > 3:
         best = None
         for i in range(len(cs)):
@@ -320,10 +322,22 @@ def fit_polygon(S, opts, max_vertices=16):
     return V, err
 
 
+def _solidity(S):
+    from scipy.spatial import ConvexHull
+    x, y = S[:, 0], S[:, 1]
+    area = abs(0.5 * (np.dot(x, np.roll(y, -1)) - np.dot(np.roll(x, -1), y)))
+    try:
+        hull = ConvexHull(S).volume
+    except Exception:
+        return 0.0
+    return area / hull if hull > 0 else 0.0
+
+
 def choose_loop_primitive(S, opts):
     """Primitive model selection for a closed loop of samples. Returns (prim, err) or None."""
     cands = []
-    res = choose_closed_primitive(S, opts)
+    # cost gate: ellipses and (rounded) rectangles are convex
+    res = choose_closed_primitive(S, opts) if _solidity(S) >= 0.9 else None
     if res is not None:
         prim, _, err = res
         cands.append((err, 0, prim))
@@ -425,6 +439,8 @@ def snap_region_primitives(regions, chains, opts, drawn, shape=None, ctx=None):
     Returns {region id: prim dict}. Chains of accepted loops get .snapped=True and new geometry;
     chains touching a moved junction get their end points moved accordingly."""
     min_len = opts.get("region_prim_min_len", 24)
+    validate = opts.get("geom_repair", False)
+    fcache = {}
     max_shift = opts.get("region_prim_max_shift", 1.5)
     out = {}
     # incident open-chain ends per junction vertex
@@ -524,22 +540,70 @@ def snap_region_primitives(regions, chains, opts, drawn, shape=None, ctx=None):
             new_geoms[cid] = g
         if not ok:
             continue
-        for cid, g in new_geoms.items():
-            chains[cid].geom = g
-            chains[cid].snapped = True
+        # tentative application (kept only if no neighbouring outline starts to self-cross)
         loop_cids = {cid for cid, _ in loop}
+        changes = dict(new_geoms)
+        new_moved = {}
         for v, p in zip(verts, newpos):
             key = _vkey(v)
-            if key in moved:
+            if key in moved or key in new_moved:
                 continue
-            moved[key] = p
+            new_moved[key] = p
             for cid, at_start in inc.get(key, []):
                 if cid in loop_cids:
                     continue
                 c = chains[cid]
-                c.geom = _move_end(c.geom, at_start, p)
+                changes[cid] = _move_end(changes.get(cid, c.geom), at_start, p)
+        if validate and not _snap_keeps_valid(changes, chains, regions, drawn, fcache):
+            continue
+        for cid, g in changes.items():
+            chains[cid].geom = g
+        for cid in new_geoms:
+            chains[cid].snapped = True
+        moved.update(new_moved)
         out[r.rid] = prim
     return out
+
+
+def _snap_keeps_valid(changes, chains, regions, drawn, fcache):
+    """True if no outline of a region touching the changed chains turns from simple into self-crossing."""
+    from .validity import _ring_ok, flatten_geom, split_pinches
+
+    def fl(cid, g):
+        hit = fcache.get(cid)
+        if hit is not None and hit[0] is g:
+            return hit[1]
+        P = flatten_geom(g)
+        fcache[cid] = (g, P)
+        return P
+    rids = set()
+    for cid in changes:
+        c = chains[cid]
+        for rr in (c.left, c.right):
+            if rr >= 0 and drawn[rr]:
+                rids.add(rr)
+
+    def ring(loop, geoms):
+        parts = []
+        for cid, rev in loop:
+            g = geoms.get(cid)
+            P = flatten_geom(g) if g is not None else fl(cid, chains[cid].geom)
+            if rev:
+                P = P[::-1]
+            parts.append(P[:-1] if len(loop) > 1 else P)
+        return np.vstack(parts)
+    for rr in rids:
+        for lp in regions[rr].loops:
+            if not any(cid in changes for cid, _ in lp):
+                continue
+            for sub in split_pinches(lp, chains):
+                if not any(cid in changes for cid, _ in sub):
+                    continue
+                if any(chains[cid].geom is None for cid, _ in sub):
+                    continue
+                if _ring_ok(ring(sub, {})) and not _ring_ok(ring(sub, changes)):
+                    return False
+    return True
 
 
 # ------------------------------------------------------------------ blur-invariant corner radius

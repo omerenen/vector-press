@@ -29,10 +29,10 @@ DEFAULTS = dict(
     smooth_sigma=1.0,        # boundary smoothing before curve fitting (samples)
     primitives=True,         # emit circle/ellipse/rect for closed boundaries that fit them
     prim_tol=0.75,           # primitive acceptance error (px, robust)
-    region_prims=False,      # phase 2 A: fit primitives to whole region outlines split by junctions, snap chains
-    rect_refine=False,       # phase 2 A: robust least-squares refinement of rect / rounded-rect fits
-    blur_sharp_ratio=0.0,    # phase 2 A: fitted corner radius < ratio x measured edge blur -> sharp rect (0 = off)
-    geom_repair=False,       # phase 2 A: split pinched loops, refit self-crossing / zero-area loops as polylines
+    region_prims=True,       # phase 2 A: fit primitives to whole region outlines split by junctions, snap chains
+    rect_refine=True,        # phase 2 A: robust least-squares refinement of rect / rounded-rect fits
+    blur_sharp_ratio=3.8,    # phase 2 A: fitted corner radius < ratio x measured edge blur -> sharp rect (0 = off)
+    geom_repair=True,        # phase 2 A: split pinched loops, refit self-crossing / zero-area loops as polylines
     corner_lines=False,      # phase 2 A: blur-robust corners from straight arm pairs (line-line intersection)
     corner_blur_zone=2.0,    # corner_lines: arclength (px) around a corner ignored as blurred
     prim_polygons=True,      # region_prims: also straight-edged polygons (emitted without junction vertices)

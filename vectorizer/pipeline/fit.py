@@ -410,9 +410,19 @@ def ellipse_dist(P, e, n=720):
 
 
 def robust_err(d):
-    """Primitive acceptance error: tolerant to a few noisy samples, not to real features."""
-    d = np.abs(d)
-    return float(max(np.percentile(d, 90), d.max() / 2.0))
+    """Primitive acceptance error: tolerant to a few noisy samples, not to real features.
+
+    max(90th percentile (linear interpolation, as np.percentile), max / 2); partition-based (fast)."""
+    d = np.abs(np.asarray(d, float))
+    n = len(d)
+    if n == 0:
+        return 0.0
+    pos = 0.9 * (n - 1)
+    lo = int(math.floor(pos))
+    hi = min(lo + 1, n - 1)
+    P = np.partition(d, [lo, hi])
+    q = P[lo] + (pos - lo) * (P[hi] - P[lo])
+    return float(max(q, d.max() / 2.0))
 
 
 def robust_err_cols(D):
@@ -465,7 +475,7 @@ def _min_area_rect(P):
     return best
 
 
-def fit_rounded_rect(P, tol, axis_aligned=False, refine=False, refine_gate=2.5):
+def fit_rounded_rect(P, tol, axis_aligned=False, refine=False, refine_gate=2.0):
     """Return dict(cx, cy, w, h, r, angle_deg, err, err0) or None."""
     if len(P) < 8:
         return None

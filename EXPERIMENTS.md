@@ -328,3 +328,27 @@ conflicts (a chain/junction already snapped by another primitive) must agree wit
 rejected. Regions are emitted as `<rect>/<circle>/<ellipse>`, polygons as a subpath with only their vertices.
 Loops clipped by the canvas are skipped. `rect_refine`: soft-L1 IRLS Gauss–Newton refinement of the rect/rounded-rect
 fit (bbox/hull initialisation is pulled by junction bumps and JPEG specks).
+
+### A-4 Diagnosis: self-intersections (before the fix)
+`pc_self_intersections` counts filled subpaths whose flattened outline is not simple (shapely). Classified on dev_small
+(base, graph-engine outputs only; the photo items and one photo fallback are VTracer output, 42 subpaths there):
+| class | n | root cause |
+|---|---|---|
+| float closing artefact | **50** | our loops are written with relative coordinates; the parser's accumulated float sum ends 1e-13 px away from the start point, GEOS sees two non-adjacent segments touching at the start → "Self-intersection". Same for loops ending with an elliptical arc (consumers recompute the arc end point from the centre parameterisation). Not a real defect, but a cutter's importer can see the same duplicate point |
+| zero-area loop | 13 | tiny regions (3×3 px dots, 1-px slivers between two junctions) whose chains are all fitted as the same straight line(s) |
+| lattice pinch | 3 | a 4-connected region touching itself at one lattice vertex (diagonal pixels): ring touches itself |
+| real crossing | 2 | curve of one chain crossing a neighbouring chain of the same loop near a junction (small angle between chains), e.g. phase-1 test_0049 |
+New with region primitives: an exact snapped primitive edge can deviate ≤1.5 px from the pixel lattice, so a neighbouring
+chain (thin sliver regions along the shape) can cross it.
+
+### A-5 Geometry repair (`geom_repair`)
+(1) the last segment of every closed loop is written in absolute coordinates (a closing line is left to `z`); loops are
+rotated so they do not end with an arc; (2) loops are split at repeated lattice vertices (pinch → two simple rings);
+(3) every emitted ring is tested (shapely `LinearRing.is_simple` + area > 0); chains of invalid loops are re-emitted as
+polylines through their sub-pixel samples, then through the raw crack midpoints (simple by construction); changed chains
+re-trigger the check of the other loops using them (each chain escalates ≤ 2×, so this terminates); (4) loops still
+invalid (polylines crossing an exact primitive edge) are emitted as their `make_valid` parts snapped to the output grid
+(`set_precision(0.01)`, so rounding to 2 decimals cannot re-create a crossing); zero-area leftovers are dropped.
+Alternatives considered: constrained Bézier fitting (control points kept inside the lattice corridor; a QP per segment, does
+not handle zero-area and pinch cases), boolean clean-up of every path (`buffer(0)` on all regions: changes shared borders
+→ gaps between neighbours), relaxing the metric (not ours to change).
