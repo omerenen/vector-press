@@ -414,3 +414,24 @@ crossings. Re-emitting the collapsed regions as polylines gave them their real s
 well; the shared chains are left untouched). Tried before that: a tighter Bézier refit level (fit_tol/2, no smoothing)
 before the polyline levels — nodes −2 % only on tdev_0021, kept as the first repair level (`repair_refit`).
 tdev_0021: self-intersections 391 → 0, tiny islands 656 → 659, nodes 20 035 → 18 737 (vs. no repair).
+
+### A-10 Full runs: `A_final` vs `A_base` (= phase2-base, run from a clean `git archive phase2-base`), `printcut: true`
+**dev (130 images, workers 2)**
+| cat | composite | SSIM | PSNR | ΔE | edge_f | edge_dev | gap | corner rec | corner err | prim | nodes | gz | self-x |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| ALL | 0.907 (+0.002) | 0.970 (+0.001) | 32.6 (+0.38) | 1.166 (−0.016) | 0.957 (+0.001) | 0.213 (−0.007) | 0 | 0.856 (+0.034) | 0.948 (−0.039) | **0.844 (+0.378)** | −0 % | −0 % | **0.53 (−2.47)** |
+| icon | 0.951 (+0.001) | +0.000 | +0.29 | −0.005 | +0.000 | −0.001 | 0 | | | | −3 % | −0 % | 0 (−0.85) |
+| logo | 0.924 (+0.001) | +0.001 | +0.47 | −0.014 | −0.000 | −0.006 | 0 | | | | −2 % | −0 % | 0.05 (−1.70) |
+| flat_illustration | 0.958 (+0.005) | +0.001 | +1.09 | −0.024 | +0.001 | −0.015 | 0 | 0.958 (+0.184) | 0.530 (−0.171) | 0.917 (+0.500) | −3 % | −1 % | 0 (−1.00) |
+| line_art | 0.901 (+0.002) | +0.001 | +0.30 | −0.019 | +0.000 | −0.004 | 0 | | | | −2 % | +2 % | 0 (−6.75) |
+| diagram | 0.898 (+0.004) | +0.002 | +0.32 | −0.044 | +0.002 | −0.015 | 0 | 0.868 (−0.004) | 1.116 (0) | 0.822 (+0.341) | −5 % | −5 % | 0 (−1.90) |
+| gradient | 0.882 (+0.001) | +0.000 | +0.00 | −0.001 | +0.004 | −0.000 | 0 | 0.642 (0) | 0.731 (−0.035) | | −3 % | +0 % | 0.20 (−3.85) |
+| photo | 0.758 (0) | 0 | 0 | 0 | 0 | | | | | | 0 | 0 | 6.4 (0) |
+Pooled dev primitives: 58/122 → **103/122** (rect 36→58/73, roundrect 18→38/42, triangle 2→3/3, polygon 1→2/2, star 0→1/1,
+ellipse 1/1). The only remaining self-intersections on dev are in two images classified as photo (VTracer engine:
+dev_0029, dev_0069) and the photos. All categories within the no-regression tolerances.
+
+**tdev (53 DALL-E images, primary target score)**: composite 0.702 (+0.000), SSIM +0.000, PSNR +0.015 dB, ΔE −0.001,
+edge_f ±0, nodes −0 %, gz +0 %, overlap ratio +0.01, tiny islands −2.4 / image, thin features ±0, **self-intersections
+121 → 56 per image**. 39 of 53 outputs are byte-identical (VTracer fallback, untouched by stream A); on the 14 graph-engine
+outputs self-intersections go **3460 → 0**. (The target score is dominated by the segmentation / fallback problem → stream B.)
