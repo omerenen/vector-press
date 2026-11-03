@@ -45,6 +45,9 @@ DEFAULTS = dict(
     max_presets=None,        # presets that mode="max" processes at 2x (None = MAX_MODE_PRESETS)
     graphic_override=True,   # preset="auto": strong-edge graphic art (classifier flat >= 0.2 and ink_edge >= 0.4) keeps
                              # the region engine however many regions it has (only pure noise, noise_density, bails)
+    route_max_c90=100,       # photo_route "try" and graphic_override only for moderate palettes (classifier c90 <= this);
+                             # many-colour painterly AI images (c90 104-672 on tdev) are better served by VTracer
+    fringe_max_colors=16,    # fringe clean-up only for small palettes (degraded flat art); textured art loses detail
     photo_fallback=None,     # region-explosion fallback to the photo engine: None = only with preset "auto", True/False force
     low_alpha=24,
     cutout=False,            # cut-file geometry: real holes, no stacking overlaps, no seams, one path per colour
@@ -183,7 +186,8 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
         timings["classify"] = time.perf_counter() - t
         stats["image_type"] = itype
         preset = TYPE_TO_PRESET[itype]
-        if preset == "photo" and options.get("photo_route", DEFAULTS["photo_route"]) == "try":
+        if (preset == "photo" and options.get("photo_route", DEFAULTS["photo_route"]) == "try"
+                and feats.get("c90", 0) <= options.get("route_max_c90", DEFAULTS["route_max_c90"])):
             preset = "gradient"
     opts.update(preset_options(preset))
     if intent:
@@ -206,7 +210,7 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
         raise TypeError(f"unknown option(s): {sorted(unknown)}")
     fallback = auto if opts["photo_fallback"] is None else bool(opts["photo_fallback"])
     graphic = bool(fallback and opts["graphic_override"] and feats and not feats.get("empty")
-                   and feats["flat"] >= 0.2 and feats["ink_edge"] >= 0.4)
+                   and feats["flat"] >= 0.2 and feats["ink_edge"] >= 0.4 and feats["c90"] <= opts["route_max_c90"])
     if graphic:
         stats["graphic"] = True
     if opts["fringe"] in (False, "none", "off"):
@@ -251,7 +255,7 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
                                                 bail_density=(None if not fallback else opts["noise_density"] if graphic
                                                               else opts["max_region_density"] * 4))
         timings["quantize"] = time.perf_counter() - t
-        if opts["fringe"] and not qinfo.get("bailed"):
+        if opts["fringe"] and not qinfo.get("bailed") and qinfo["n_colors"] <= opts["fringe_max_colors"]:
             from .pipeline.fringe import clean_fringe
             from .pipeline.boundary import label_regions
             t = time.perf_counter()
