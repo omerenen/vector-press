@@ -74,3 +74,18 @@ Format: what · source · license · expected benefit · CPU feasibility · deci
   are the same family of ideas, implemented from scratch.
 - **Adobe Image Trace / Inkscape Trace Bitmap** (Inkscape uses Potrace, GPL) — presets per content type (logo, sketch,
   photo) → mirrored by our classifier + presets.
+
+## Phase 2 — stream C
+### Edge fringes on degraded flat art (work item 8)
+- **Component halo model** (own): thin component (2·area/perimeter < 1.6 px, < 1 % of the image) whose colour is within
+  0.09 OKLab of an adjacent *non-thin* component is an overshoot band of that surface; its pixels are re-assigned per
+  pixel to the most similar label within 3 px, then specks are merged. Decision: **kept** for the flat presets
+  (`fringe="auto"`), see EXPERIMENTS C-8b.
+- **Palette edge-only colour model** (own): drop a palette colour whose pixels never survive a 3×3 erosion and that is
+  within 0.09 of an adjacent colour. Same gain on flat art, but on line art it deletes whole stroke colours (dev_0089
+  −0.24, dev_0097 −0.16) → rejected (kept as `fringe="colour"` for experiments).
+- **Pre-quantisation edge restoration** (shock filter, Osher & Rudin 1990; Kuwahara/mode filters): would remove the
+  fringe colours before palette extraction, but also removes the anti-aliasing coverage that the sub-pixel boundary
+  placement (exp_011) reads → not prototyped.
+- **Wider sliver mixture test** (quantize.py): cannot see double fringes (each band's main neighbour is the other band) →
+  rejected on the diagnosis data.

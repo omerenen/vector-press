@@ -40,6 +40,9 @@ DEFAULTS = dict(
                              # "try" = it goes to the gradient preset and reaches the photo engine only through the
                              # region-explosion fallback (JPEG'd flat art is often classified as photo)
     noise_density=0.1,       # fallback: more regions than this per px (counted before clean-up) = pure noise -> coarse VTracer
+    fit_profile="default",   # "tight": halved fit tolerances at 1x (TIGHT_FIT) for the graph-engine content presets
+                             # (= the measured cause of the old max-mode gain, without 4x pixels); not for cut / 2x max
+    max_presets=None,        # presets that mode="max" processes at 2x (None = MAX_MODE_PRESETS)
     photo_fallback=None,     # region-explosion fallback to the photo engine: None = only with preset "auto", True/False force
     low_alpha=24,
     cutout=False,            # cut-file geometry: real holes, no stacking overlaps, no seams, one path per colour
@@ -71,6 +74,7 @@ DEFAULTS = dict(
 MAX_MODE = dict(upscale=2)
 MAX_MODE_PRESETS = {"icon", "logo", "flat_illustration", "line_art", "diagram"}
 FRINGE_PRESETS = {"icon", "logo", "flat_illustration"}
+TIGHT_FIT = dict(fit_tol=0.3, line_tol=0.33)
 _PX_DEFAULTS = dict(corner_scale=3.0, seam_width=1.0)
 
 
@@ -184,8 +188,13 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
         stats["intent"] = intent
         auto = False                         # cut/print never fall back to the VTracer photo engine (clean vectors)
     stats["preset"] = preset if not intent else f"{intent}:{preset}"
-    if mode == "max" and preset in MAX_MODE_PRESETS:
+    max_presets = options.get("max_presets") or DEFAULTS["max_presets"] or MAX_MODE_PRESETS
+    upscaled = mode == "max" and preset in max_presets
+    if upscaled:
         opts.update(MAX_MODE)
+    if (options.get("fit_profile", DEFAULTS["fit_profile"]) == "tight" and opts["engine"] == "graph"
+            and not upscaled and intent != "cut"):
+        opts.update(TIGHT_FIT)
     opts.update({k: v for k, v in _map_user_options(options).items() if v is not None})
     unknown = set(opts) - set(DEFAULTS)
     if unknown:

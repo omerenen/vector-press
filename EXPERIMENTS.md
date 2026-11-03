@@ -345,3 +345,24 @@ fit tolerance, which 1× tight fitting reproduces without 4× pixels, without th
 byte increase. Only diagrams gain from resolution itself (max − tight = +0.015): 1-px box outlines between a fill and the
 background are lost at 1× and kept at 2× (dev_0117 +0.054, look: sheet). Max mode also has large losses on
 colour-shifted / JPEG line art (dev_0084 −0.066, 10× bytes: staircased diagonals at 2×).
+
+### C-5a Region-density fallback on tdev — the "pure noise" branch is the main loss (tdev_small, 18 items)
+Diagnosis: the fallback has two outputs — VTracer with the tuned photo parameters, or, when `n_regions > 0.1·H·W`,
+coarse "pure noise" parameters (filter_speckle 8, colour precision 6, layer difference 24) to bound the file size. With
+the early bail-out the region count is taken *before* speckle merging, so halftone / screen-print / stencil AI art
+(16–29 % of pixels start a new region) is treated as random noise: 6 of 18 tdev_small items, blotchy posterised
+output (look: tdev_0024 sheet). Measured on dev / synthetic: real uniform noise has 0.62–0.65 regions/px
+(256² and 1024²), dev photos ≤ 0.12, tdev art ≤ 0.22.
+Per item (base = noise branch → tuned photo params): tdev_0000 0.481→0.559, tdev_0024 0.517→0.618, tdev_0039
+0.543→0.639, tdev_0045 0.567→0.660, tdev_0048 0.590→0.673 (LPIPS 0.52→0.50, 0.49→0.39, 0.21→0.17, 0.33→0.28,
+0.20→0.13; SSIM +0.06…+0.16; edgeF +0.07…+0.16); cost: 2–2.5× bytes (already in the zero-compactness range >1 MB)
+and 2–3× nodes. Fix: new key `noise_density` (old 0.1) → 0.35 (between art ≤0.22 and noise ≥0.6).
+Same bug on dev only through the classifier change below (dev_0120 photo, 0.117 regions/px when routed through the
+region engine).
+
+### C-5b Classifier "photo" → region engine first (`photo_route="try"`)
+test_0048-class (JPEG'd flat art → photo). Instead of trusting colour-count features, a "photo" verdict goes to the
+gradient preset and reaches VTracer only through the measured region explosion (cost = quantisation until the bail-out).
+Dev items classified photo (12): dev_0029 (logo, noise) 0.758→**0.861** (143→16 KB), dev_0069 (gradient)
+0.765→**0.866** (97→14 KB); all 10 real photos still end in the photo engine (2 729–18 124 regions) with identical
+output once `noise_density` is fixed (dev_0120 −0.136 with the old 0.1 noise branch).
