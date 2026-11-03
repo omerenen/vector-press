@@ -41,6 +41,7 @@ DEFAULTS = dict(
     denoise=1,               # edge-preserving sigma-filter iterations before quantisation (W1)
     centerline=False,        # trace thin regions as stroked centre lines (W8)
     subpixel=True,           # move boundary samples to the anti-aliasing implied edge position
+    subpixel_taper=3,        # samples over which the sub-pixel shift fades in at junctions (0 = off)
     gradients=True,          # fit linear/radial gradients to banded colour ramps (W6)
     grad_tol=0.03,           # max OKLab RMS residual for an accepted gradient
     slivers=True,            # remove thin AA/JPEG bands whose colour mixes their neighbours

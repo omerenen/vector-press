@@ -619,7 +619,9 @@ def subpixel_field(ctx, max_shift=0.7, min_contrast=0.05):
         e = 0.0
         for c in (c0, c1, c2, c3):
             e = e + np.clip(1.0 - ((c - ca) * d).sum(-1) / Ls, 0.0, 1.0)
-        return np.where(good, np.clip(e - 2.0, -max_shift, max_shift), 0.0)
+        val = np.clip(e - 2.0, -max_shift, max_shift)
+        # (interpolating "third" profiles along the chain instead of 0 was tried: slightly worse, abl_016_interp)
+        return np.where(good, val, 0.0)
 
     if H >= 4:
         sl = lambda y0, y1: (R[y0:y1], Lr[y0:y1], lab[y0:y1])  # noqa: E731
@@ -636,11 +638,18 @@ def _chain_disp(pts, field):
     horiz = a[:, 1] == b[:, 1]
     x = np.minimum(a[:, 0], b[:, 0]).astype(np.int64)
     y = np.minimum(a[:, 1], b[:, 1]).astype(np.int64)
+    e = np.where(horiz, dh[y, np.minimum(x, dh.shape[1] - 1)], dv[np.minimum(y, dv.shape[0] - 1), x])
+    bad = np.isnan(e)
+    if bad.any():
+        good = ~bad
+        if good.sum() >= 2:
+            i = np.arange(len(e))
+            e[bad] = np.interp(i[bad], i[good], e[good])
+        else:
+            e[bad] = 0.0
     disp = np.zeros((len(a), 2))
-    h = horiz
-    disp[h, 1] = dh[y[h], x[h]]
-    v = ~horiz
-    disp[v, 0] = dv[y[v], x[v]]
+    disp[horiz, 1] = e[horiz]
+    disp[~horiz, 0] = e[~horiz]
     return disp
 
 
@@ -654,6 +663,11 @@ def fit_chain(chain, opts, ctx=None):
         if closed:
             S = S + disp
         else:
+            tp = opts.get("subpixel_taper", 3)
+            if tp:
+                i = np.arange(1, len(disp) + 1, dtype=np.float64)
+                w = np.minimum(1.0, np.minimum(i, len(disp) + 1 - i) / float(tp))
+                disp = disp * w[:, None]
             S[1:-1] = S[1:-1] + disp
     tol = opts.get("fit_tol", 0.6)
     line_tol = opts.get("line_tol", 0.65)

@@ -1,0 +1,4 @@
+name: exp_000b_cutout
+description: Plain VTracer in cutout (non-stacked) mode - reference for the gap check.
+method: vtracer
+params: {hierarchical: cutout}

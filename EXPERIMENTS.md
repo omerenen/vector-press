@@ -176,6 +176,18 @@ made the whole group fail → background stayed banded, dev_0079 edgeF 0.58), el
 gradients look much better than contour bands). Gradient category 0.875→**0.881**, edgeF 0.819→0.842 (now above the
 tuned baseline 0.838), ΔE −0.11. Overall **0.904** → best-v3.
 
+## Final-stage experiments (dev)
+- `abl_015_up2` (process at 2×, tolerances unscaled): composite +0.003, PSNR +2.0 dB, line_art +0.019, diagram +0.011, but corner
+  recall −0.155, bytes +25 %, time ×2.8. `abl_015_up2s` (all px tolerances scaled ×2): composite −0.003 → the gain comes from
+  effectively tighter fitting, not from resolution. `abl_015_up2c` (only corner arm scaled): +0.002, line_art +0.019,
+  diagram +0.011, icon +0.008, gradient −0.014 → **mode="max" = 2× processing for icon/logo/line_art/diagram presets only**
+  (fast mode unchanged). `abl_015_detail07` (finer default detail): mixed (logo +0.005, diagram −0.007) → default kept.
+- Seam width must scale with the processing factor (max mode showed a 2-px 3 % leak on test_0020 with a 0.5 px effective
+  seam) → fixed, gap 0.
+- `abl_016_taper` (fade the sub-pixel shift in over 3 samples at junctions): neutral, corner recall +0.006 → kept.
+  `abl_016_interp` (interpolate unknown shifts across junction profiles): slightly worse (prim −0.026) → reverted.
+  Visible residual defect: thin strokes look slightly pinched where they cross other strokes (see sheet_line_art).
+
 ## Best versions (git tags cannot be pushed from this environment: HTTP 403 on refs/tags; recorded here instead)
 | tag | commit | dev composite | note |
 |---|---|---|---|
