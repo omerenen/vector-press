@@ -131,6 +131,14 @@ Lee sigma filter in OKLab (3×3, threshold max(0.03, 4σ_noise)) before palette 
 every category improves (gradient +0.015, logo +0.007). 2 iterations: same overall, diagram slightly worse, slower.
 **Keep, denoise=1 default.**
 
+## exp_011_subpixel — sub-pixel boundary placement from anti-aliasing (research-driven)
+Idea (vectorizer.ai publicly states it "places boundaries according to the anti-aliasing pixel values"): for every
+crack between regions A|B take the 4-px profile across it, unmix each pixel into coverage α of B's palette colour,
+and move the crack midpoint to e = Σ(1−α) − 2 px (clamped ±0.7) along the normal; profiles touching a third region,
+low-contrast pairs (<0.05 OKLab) and gradient regions are skipped.
+Result vs exp_010: composite **0.901 (+0.006)**, PSNR +0.43, edge_dev −0.013, corner recall +0.020, corner err −0.022 px,
+primitive recovery 0.287→**0.382**, diagram +0.014 (PSNR +1.14 dB), icon +0.007; gradient/photo neutral. **Keep → best-v2.**
+
 ## Best versions (git tags cannot be pushed from this environment: HTTP 403 on refs/tags; recorded here instead)
 | tag | commit | dev composite | note |
 |---|---|---|---|

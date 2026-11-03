@@ -1,0 +1,4 @@
+name: exp_011_subpixel
+description: exp_010 (auto presets, denoise 1) + sub-pixel boundary placement from anti-aliasing coverage (4-px profile unmixing per crack).
+method: pipeline
+params: {engine: graph, preset: auto}

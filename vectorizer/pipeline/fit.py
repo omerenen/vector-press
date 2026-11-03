@@ -501,11 +501,70 @@ def rrect_geom(rr):
 
 # ------------------------------------------------------------------ chain fitting
 
-def fit_chain(chain, opts):
+def subpixel_offsets(pts, ctx, max_shift=0.7, min_contrast=0.05):
+    """Edge position correction for each crack of a chain from anti-aliasing values.
+
+    For crack i (between pts[i] and pts[i+1]) take the 4-pixel profile across it
+    (2 pixels each side). Each pixel colour is unmixed into a coverage alpha of the
+    second side's palette colour; the edge sits where the first side's mass ends:
+    e = sum(1 - alpha) - 2 (in px, along the crack normal). Samples whose profile
+    touches a third region (junctions, thin features) are left unchanged.
+    Returns (N-1, 2) displacement vectors for the crack midpoints.
+    """
+    lab, R, rl, pal = ctx["lab"], ctx["R"], ctx["region_label"], ctx["pal_lab"]
+    H, W = R.shape
+    a, b = pts[:-1], pts[1:]
+    horiz = a[:, 1] == b[:, 1]
+    x = np.minimum(a[:, 0], b[:, 0]).astype(np.int64)
+    y = np.minimum(a[:, 1], b[:, 1]).astype(np.int64)
+    n = len(a)
+    # profile pixel coordinates (row, col) for k = -2..1 along +normal (+y for horizontal cracks, +x for vertical)
+    k = np.array([-2, -1, 0, 1])
+    rows = np.where(horiz[:, None], y[:, None] + k[None], y[:, None] + 0 * k[None])
+    cols = np.where(horiz[:, None], x[:, None] + 0 * k[None], x[:, None] + k[None])
+    ok = (rows >= 0).all(1) & (rows < H).all(1) & (cols >= 0).all(1) & (cols < W).all(1)
+    disp = np.zeros((n, 2))
+    if not ok.any():
+        return disp
+    idx = np.nonzero(ok)[0]
+    rr, cc = rows[idx], cols[idx]
+    reg = R[rr, cc]                                   # (m, 4)
+    ra, rb = reg[:, 1], reg[:, 2]                     # pixels adjacent to the crack
+    same = (reg[:, 0] == ra) & (reg[:, 3] == rb) & (ra != rb) & (ra >= 0) & (rb >= 0)
+    la, lb = rl[np.maximum(ra, 0)], rl[np.maximum(rb, 0)]
+    skip = ctx.get("skip_labels") or set()
+    good = same & (la >= 0) & (lb >= 0)
+    if skip:
+        good &= ~np.isin(la, list(skip)) & ~np.isin(lb, list(skip))
+    if not good.any():
+        return disp
+    idx, rr, cc, la, lb = idx[good], rr[good], cc[good], la[good], lb[good]
+    ca, cb = pal[la], pal[lb]                         # (m, 3)
+    d = cb - ca
+    L2 = (d * d).sum(1)
+    con = np.sqrt(L2) >= min_contrast
+    px = lab[rr, cc]                                  # (m, 4, 3)
+    alpha = ((px - ca[:, None, :]) * d[:, None, :]).sum(-1) / np.maximum(L2, 1e-9)[:, None]
+    alpha = np.clip(alpha, 0, 1)
+    e = np.clip((1 - alpha).sum(1) - 2.0, -max_shift, max_shift)
+    e = np.where(con, e, 0.0)
+    h = horiz[idx]
+    disp[idx, 1] = np.where(h, e, 0.0)
+    disp[idx, 0] = np.where(h, 0.0, e)
+    return disp
+
+
+def fit_chain(chain, opts, ctx=None):
     """Populate chain.geom (and chain.prim for closed primitive chains)."""
     pts = chain.pts
     closed = chain.closed
     S = chain_samples(pts, closed)
+    if ctx is not None and len(pts) >= 3:
+        disp = subpixel_offsets(pts, ctx)
+        if closed:
+            S = S + disp
+        else:
+            S[1:-1] = S[1:-1] + disp
     tol = opts.get("fit_tol", 0.6)
     line_tol = opts.get("line_tol", 0.65)
     sig = opts.get("smooth_sigma", 1.0)

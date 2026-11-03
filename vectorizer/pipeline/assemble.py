@@ -48,7 +48,7 @@ def _containment(regions, R, lbl):
     return depth
 
 
-def build_elements(lbl, palette_rgb, opts, timings=None, label_fill=None):
+def build_elements(lbl, palette_rgb, opts, timings=None, label_fill=None, ctx=None):
     """Return (list of SVG element strings, stats).
 
     label_fill: optional {label: (fill_attr_string, seam_paint)} overrides (e.g. gradients).
@@ -62,9 +62,11 @@ def build_elements(lbl, palette_rgb, opts, timings=None, label_fill=None):
     timings["graph"] = time.perf_counter() - t
     t = time.perf_counter()
     drawn = np.array([r.label >= 0 for r in regions], bool)
+    if ctx is not None:
+        ctx = dict(ctx, R=R, region_label=rl)
     for c in chains:
         if (c.left >= 0 and drawn[c.left]) or (c.right >= 0 and drawn[c.right]):
-            fit_chain(c, opts)
+            fit_chain(c, opts, ctx)
     timings["fit"] = time.perf_counter() - t
     t = time.perf_counter()
     depth = _containment(regions, R, lbl)

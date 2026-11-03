@@ -32,6 +32,7 @@ DEFAULTS = dict(
     line_tls=0.45,           # straight-line test tolerance on TLS fit (px)
     thin_lines="ridge",      # "ridge": rescue sub-pixel lines; "both": + bridge diagonal saddles (off: +33% bytes)
     denoise=1,               # edge-preserving sigma-filter iterations before quantisation (W1)
+    subpixel=True,           # move boundary samples to the anti-aliasing implied edge position
     gradients=True,          # fit linear/radial gradients to banded colour ramps (W6)
     grad_tol=0.03,           # max OKLab RMS residual for an accepted gradient
     slivers=True,
@@ -78,7 +79,7 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
         timings["vtracer"] = time.perf_counter() - t
     else:
         t = time.perf_counter()
-        lbl, pal_rgb, pal_lab, qinfo = quantize(rgba[..., :3], rgba[..., 3], radius=opts["color_radius"],
+        lbl, pal_rgb, pal_lab, qinfo, lab = quantize(rgba[..., :3], rgba[..., 3], radius=opts["color_radius"],
                                                 max_colors=opts["max_colors"], min_area=opts["min_area"],
                                                 thin_lines=opts["thin_lines"], mix_suppress=opts["mix_suppress"],
                                                 slivers=opts["slivers"], merge_frac=opts["merge_frac"],
@@ -101,7 +102,8 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
                 pal_rgb = oklab_to_rgb8(pal_lab)
                 timings["gradients"] = time.perf_counter() - t
                 stats["n_gradients"] = len(defs)
-            els, est = build_elements(lbl, pal_rgb, opts, timings, label_fill=label_fill)
+            ctx = {"lab": lab, "pal_lab": pal_lab, "skip_labels": set(label_fill or {})} if opts["subpixel"] else None
+            els, est = build_elements(lbl, pal_rgb, opts, timings, label_fill=label_fill, ctx=ctx)
             stats.update(est)
             body = (f"<defs>{''.join(defs)}</defs>" if defs else "") + "".join(els)
             svg = svg_document(W, H, body)

@@ -492,4 +492,4 @@ def quantize(rgb, alpha, radius=0.045, max_colors=64, min_area=None, window=2, a
             mk = lbl == k
         newpal[k] = np.median(lab[mk], axis=0) if mk.any() else pal[used[k]]
     info = {"noise": noise, "n_colors": K, "min_area": min_area}
-    return lbl, oklab_to_rgb8(newpal), newpal, info
+    return lbl, oklab_to_rgb8(newpal), newpal, info, lab
