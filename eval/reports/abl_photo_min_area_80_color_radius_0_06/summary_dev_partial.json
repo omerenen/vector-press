@@ -1,0 +1,58 @@
+{
+ "config": {
+  "name": "abl_photo_min_area_80_color_radius_0_06",
+  "description": "exp_007 + gradient detection (soft band boundaries measured over a 5px span) and linear/radial multi-stop gradient fitting.",
+  "method": "pipeline",
+  "params": {
+   "engine": "graph",
+   "min_area": 80,
+   "color_radius": 0.06
+  }
+ },
+ "split": "dev",
+ "wall_s": 11.4652681350708,
+ "summary": {
+  "ALL": {
+   "n": 10,
+   "valid_rate": 1.0,
+   "composite": 0.5715773497072234,
+   "ssim": 0.6368608123075103,
+   "ssim_in": 0.6399926877397386,
+   "psnr": 22.781584651815823,
+   "msssim": 0.7980379747037848,
+   "gmsd": 0.2216197167696044,
+   "de_mean": 4.720213804429564,
+   "de_p95": 14.355714300849712,
+   "edge_f": 0.5466284106437169,
+   "n_paths": 50.4,
+   "n_nodes": 5382.0,
+   "n_primitives": 1.8,
+   "bytes": 101268.5,
+   "gz_bytes": 36659.1,
+   "time": 4.004005530499944,
+   "time_median": 3.463938073999998,
+   "time_p95": 7.440187215350259
+  },
+  "photo": {
+   "n": 10,
+   "valid_rate": 1.0,
+   "composite": 0.5715773497072234,
+   "ssim": 0.6368608123075103,
+   "ssim_in": 0.6399926877397386,
+   "psnr": 22.781584651815823,
+   "msssim": 0.7980379747037848,
+   "gmsd": 0.2216197167696044,
+   "de_mean": 4.720213804429564,
+   "de_p95": 14.355714300849712,
+   "edge_f": 0.5466284106437169,
+   "n_paths": 50.4,
+   "n_nodes": 5382.0,
+   "n_primitives": 1.8,
+   "bytes": 101268.5,
+   "gz_bytes": 36659.1,
+   "time": 4.004005530499944,
+   "time_median": 3.463938073999998,
+   "time_p95": 7.440187215350259
+  }
+ }
+}

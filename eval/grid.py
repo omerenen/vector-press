@@ -52,7 +52,7 @@ def main():
         best[cat] = max(cands, key=lambda v: v["summary"].get(cat, {}).get("composite", -1))["params"]
     # stage 2: curve params on top of each category's stage-1 best
     for cat in CATEGORIES:
-        for ct, lt in itertools.product([30, 60, 90, 135], [3.5, 4.0, 6.0]):
+        for ct, lt in itertools.product([30, 60, 90, 135], [4.0]):
             p = dict(best[cat], corner_threshold=ct, length_threshold=lt)
             evaluate(p)
         cands = [v for v in done.values() if all(v["params"].get(k) == best[cat][k] for k in ("filter_speckle", "color_precision", "layer_difference"))]

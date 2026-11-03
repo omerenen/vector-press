@@ -1,0 +1,4 @@
+name: exp_009_auto
+description: exp_008 + heuristic classifier (depth-3 tree rules) + presets (flat merge_frac 1.0; lines +mixture suppression, no gradients; gradient/photo merge_frac 0.6).
+method: pipeline
+params: {engine: graph, preset: auto}

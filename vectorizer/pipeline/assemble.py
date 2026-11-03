@@ -48,10 +48,10 @@ def _containment(regions, R, lbl):
     return depth
 
 
-def build_elements(lbl, palette_rgb, opts, timings=None, region_fill=None):
+def build_elements(lbl, palette_rgb, opts, timings=None, label_fill=None):
     """Return (list of SVG element strings, stats).
 
-    region_fill: optional {rid: (fill_attr_string, seam_colour)} overrides (e.g. gradients).
+    label_fill: optional {label: (fill_attr_string, seam_paint)} overrides (e.g. gradients).
     """
     timings = timings if timings is not None else {}
     prec = int(opts.get("precision", 2))
@@ -93,8 +93,8 @@ def build_elements(lbl, palette_rgb, opts, timings=None, region_fill=None):
         fills = {}      # key -> [attr, tokens]   (insertion ordered)
         singles = []    # primitive / special elements
         for r in order[level_start:level_end]:
-            if region_fill and r.rid in region_fill:
-                fill_attr, col = region_fill[r.rid]
+            if label_fill and r.label in label_fill:
+                fill_attr, col = label_fill[r.label]
             else:
                 col = hex_color(palette_rgb[r.label])
                 fill_attr = f'fill="{col}"'

@@ -1,0 +1,4 @@
+name: exp_008_gradients
+description: exp_007 + gradient detection (soft band boundaries measured over a 5px span) and linear/radial multi-stop gradient fitting.
+method: pipeline
+params: {engine: graph}

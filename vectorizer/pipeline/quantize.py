@@ -31,7 +31,23 @@ def local_contrast(lab):
     return g
 
 
-def mixed_mask(lab, t=0.03, slack=1.2):
+def _dir_stats(lab):
+    """Per direction (a-b, a-p, p-b distances, midpoint distance, midpoint colour) - computed once."""
+    H, W, _ = lab.shape
+    P = np.pad(lab, ((1, 1), (1, 1), (0, 0)), mode="edge")
+    c = P[1:-1, 1:-1]
+    out = []
+    for dy, dx in ((0, 1), (1, 0), (1, 1), (1, -1)):
+        a = P[1 - dy:1 - dy + H, 1 - dx:1 - dx + W]
+        b = P[1 + dy:1 + dy + H, 1 + dx:1 + dx + W]
+        ab = np.sqrt(((a - b) ** 2).sum(-1))
+        ap = np.sqrt(((a - c) ** 2).sum(-1))
+        pb = np.sqrt(((c - b) ** 2).sum(-1))
+        out.append((a, b, ab, ap, pb))
+    return out
+
+
+def mixed_mask(lab, t=0.03, slack=1.2, stats=None):
     """Pixels whose colour lies between two opposite neighbours (AA / blur ramps).
 
     For each of 4 directions with neighbours a, b of pixel p: mixed if |a-b| > t,
@@ -39,15 +55,9 @@ def mixed_mask(lab, t=0.03, slack=1.2):
     Thin-line cores (local extrema) are therefore NOT mixed.
     """
     H, W, _ = lab.shape
-    P = np.pad(lab, ((1, 1), (1, 1), (0, 0)), mode="edge")
-    c = P[1:-1, 1:-1]
+    stats = stats if stats is not None else _dir_stats(lab)
     out = np.zeros((H, W), bool)
-    for dy, dx in ((0, 1), (1, 0), (1, 1), (1, -1)):
-        a = P[1 - dy:1 - dy + H, 1 - dx:1 - dx + W]
-        b = P[1 + dy:1 + dy + H, 1 + dx:1 + dx + W]
-        ab = np.sqrt(((a - b) ** 2).sum(-1))
-        ap = np.sqrt(((a - c) ** 2).sum(-1))
-        pb = np.sqrt(((c - b) ** 2).sum(-1))
+    for a, b, ab, ap, pb in stats:
         out |= (ab > t) & (ap + pb < slack * ab) & (ap > 0.15 * ab) & (pb > 0.15 * ab)
     return out
 
@@ -131,12 +141,12 @@ def _merge_close(pal, palw, radius):
 
 
 def extract_palette(lab, valid, radius=0.045, max_colors=64, min_frac=0.0002, min_px=8, flat_thresh=None, noise=None,
-                    mix_suppress=True, keep_frac=0.01, merge_frac=0.6):
+                    mix_suppress=True, keep_frac=0.01, merge_frac=0.6, stats=None):
     """Return palette (K,3) OKLab, plus the flat mask used."""
     if noise is None:
         noise = estimate_noise(lab)
     ft = flat_thresh if flat_thresh is not None else max(0.03, 4.0 * noise)
-    flat = ~mixed_mask(lab, ft) & valid
+    flat = ~mixed_mask(lab, ft, stats=stats) & valid
     if flat.sum() < max(16, 0.05 * valid.sum()):
         g = local_contrast(lab)
         thr = np.percentile(g[valid], 50) if valid.any() else 0
@@ -151,8 +161,7 @@ def extract_palette(lab, valid, radius=0.045, max_colors=64, min_frac=0.0002, mi
     dims = q.max(0) + 1
     key = (q[:, 0].astype(np.int64) * dims[1] + q[:, 1]) * dims[2] + q[:, 2]
     uk, inv, cnt = np.unique(key, return_inverse=True, return_counts=True)
-    sums = np.zeros((len(uk), 3), np.float64)
-    np.add.at(sums, inv, px)
+    sums = np.stack([np.bincount(inv, weights=px[:, c], minlength=len(uk)) for c in range(3)], 1)
     cols = (sums / cnt[:, None]).astype(np.float32)
     N = valid.sum()
     min_w = max(min_px, min_frac * N)
@@ -208,12 +217,13 @@ def assign_labels(lab, valid, pal, flat, window=2):
     flatlab = lab.reshape(-1, 3)
     # nearest palette for all pixels (chunked to bound memory)
     lbl = np.empty(H * W, np.int32)
-    dmin = np.empty(H * W, np.float32)
     step = 1 << 18
+    pal32 = pal.astype(np.float32)
+    pn = (pal32 ** 2).sum(1)
     for s in range(0, H * W, step):
-        d = ((flatlab[s:s + step, None, :] - pal[None]) ** 2).sum(-1)
+        x = flatlab[s:s + step]
+        d = pn[None, :] - 2.0 * (x @ pal32.T)      # |x|^2 omitted (constant per row)
         lbl[s:s + step] = d.argmin(1)
-        dmin[s:s + step] = d.min(1)
     lbl = lbl.reshape(H, W)
     edge = valid & ~flat
     if window > 0 and edge.any() and flat.any():
@@ -240,7 +250,7 @@ def assign_labels(lab, valid, pal, flat, window=2):
     return lbl
 
 
-def rescue_ridges(lab, lbl, pal, valid, noise=0.0, t=0.04):
+def rescue_ridges(lab, lbl, pal, valid, noise=0.0, t=0.04, stats=None):
     """Thin-line rescue: pixels that differ from two similar opposite neighbours (a ridge,
     e.g. the core of a sub-pixel-wide anti-aliased line) but were assigned the neighbours'
     label are re-assigned to the palette colour that best explains them as a mixture
@@ -250,21 +260,19 @@ def rescue_ridges(lab, lbl, pal, valid, noise=0.0, t=0.04):
     if H < 3 or W < 3:
         return lbl
     t = max(t, 3.0 * noise)
-    P = np.pad(lab, ((1, 1), (1, 1), (0, 0)), mode="edge")
-    c = P[1:-1, 1:-1]
+    stats = stats if stats is not None else _dir_stats(lab)
     ridge = np.zeros((H, W), bool)
     bg = np.zeros_like(lab)
     best = np.zeros((H, W), np.float32)
-    for dy, dx in ((0, 1), (1, 0), (1, 1), (1, -1)):
-        a = P[1 - dy:1 - dy + H, 1 - dx:1 - dx + W]
-        b = P[1 + dy:1 + dy + H, 1 + dx:1 + dx + W]
-        ab = np.sqrt(((a - b) ** 2).sum(-1))
-        m = 0.5 * (a + b)
-        pm = np.sqrt(((c - m) ** 2).sum(-1))
+    for a, b, ab, ap, pb in stats:
+        # |p - (a+b)/2| >= (ap+pb)/2 - ab/2 ... use the cheap bound min(ap, pb) as the ridge height
+        pm = np.minimum(ap, pb)
         score = pm - ab
         sel = (ab < t) & (pm > t) & (score > best)
+        if not sel.any():
+            continue
         best = np.where(sel, score, best)
-        bg[sel] = m[sel]
+        bg[sel] = 0.5 * (a[sel] + b[sel])
         ridge |= sel
     ridge &= valid & (lbl >= 0)
     if not ridge.any():
@@ -346,13 +354,10 @@ def remove_slivers(lbl, lab, pal, radius=0.045, max_thick=1.6, max_area_frac=0.0
     if nxt == 0:
         return lbl
     area = np.bincount(comp.ravel(), minlength=nxt + 1).astype(np.float64)
-    per = np.zeros(nxt + 1)
     dh = comp[:, 1:] != comp[:, :-1]
     dv = comp[1:, :] != comp[:-1, :]
-    np.add.at(per, comp[:, 1:][dh], 1)
-    np.add.at(per, comp[:, :-1][dh], 1)
-    np.add.at(per, comp[1:, :][dv], 1)
-    np.add.at(per, comp[:-1, :][dv], 1)
+    per = (np.bincount(comp[:, 1:][dh], minlength=nxt + 1) + np.bincount(comp[:, :-1][dh], minlength=nxt + 1)
+           + np.bincount(comp[1:, :][dv], minlength=nxt + 1) + np.bincount(comp[:-1, :][dv], minlength=nxt + 1)).astype(np.float64)
     thick = 2 * area / np.maximum(per, 1)
     cand = np.nonzero((thick < max_thick) & (area < max_area_frac * H * W) & (area > 0))[0]
     cand = cand[cand > 0]
@@ -457,11 +462,12 @@ def quantize(rgb, alpha, radius=0.045, max_colors=64, min_area=None, window=2, a
     lab = rgb8_to_oklab(rgb)
     valid = alpha >= alpha_threshold
     noise = estimate_noise(lab)
+    stats = _dir_stats(lab)
     pal, flat = extract_palette(lab, valid, radius=radius, max_colors=max_colors, noise=noise, mix_suppress=mix_suppress,
-                                merge_frac=merge_frac)
+                                merge_frac=merge_frac, stats=stats)
     lbl = assign_labels(lab, valid, pal, flat, window=window)
     if thin_lines in (True, "ridge", "both"):
-        lbl = rescue_ridges(lab, lbl, pal, valid, noise)
+        lbl = rescue_ridges(lab, lbl, pal, valid, noise, stats=stats)
     if thin_lines in (True, "bridge", "both"):
         lbl = bridge_saddles(lbl, lab, pal)
     if min_area is None:

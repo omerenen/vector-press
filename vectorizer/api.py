@@ -8,9 +8,13 @@ import numpy as np
 
 from .imageio import ImageLike, load_rgba
 from .pipeline.assemble import build_elements
+from .pipeline.color import oklab_to_rgb8
+from .pipeline.gradients import apply_gradients
 from .pipeline.quantize import quantize
 from .pipeline.svgout import svg_document
 from .pipeline.trace import vtracer_trace
+from .pipeline.classify import classify
+from .presets import TYPE_TO_PRESET, preset_options
 
 DEFAULTS = dict(
     engine="graph",          # "graph" (shared boundary graph) | "vtracer" (palette-cleaned VTracer) | "vtracer_raw"
@@ -27,6 +31,8 @@ DEFAULTS = dict(
     seam_width=1.0,
     line_tls=0.45,           # straight-line test tolerance on TLS fit (px)
     thin_lines="ridge",      # "ridge": rescue sub-pixel lines; "both": + bridge diagonal saddles (off: +33% bytes)
+    gradients=True,          # fit linear/radial gradients to banded colour ramps (W6)
+    grad_tol=0.03,           # max OKLab RMS residual for an accepted gradient
     slivers=True,
     merge_frac=0.6,          # palette colours closer than merge_frac*color_radius are merged            # remove thin AA/JPEG bands whose colour mixes their neighbours
     mix_suppress=False,      # drop palette colours explainable as AA mixtures (line_art/diagram presets)
@@ -49,10 +55,20 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
     t = time.perf_counter()
     rgba = load_rgba(image)
     timings["load"] = time.perf_counter() - t
-    opts = dict(DEFAULTS)
-    opts.update({k: v for k, v in options.items() if v is not None})
     H, W = rgba.shape[:2]
-    stats = {"width": W, "height": H, "preset": preset, "mode": mode}
+    stats = {"width": W, "height": H, "mode": mode}
+    opts = dict(DEFAULTS)
+    if preset == "auto":
+        t = time.perf_counter()
+        itype, feats = classify(rgba) if H > 0 and W > 0 else ("icon", {})
+        timings["classify"] = time.perf_counter() - t
+        stats["image_type"] = itype
+        preset = TYPE_TO_PRESET[itype]
+    else:
+        stats["image_type"] = None
+    opts.update(preset_options(preset))
+    stats["preset"] = preset
+    opts.update({k: v for k, v in options.items() if v is not None})
     if H == 0 or W == 0:
         return Result(svg_document(max(W, 1), max(H, 1), ""), stats)
     if opts["engine"] == "vtracer_raw":
@@ -76,9 +92,17 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
             svg = vtracer_trace(img, filter_speckle=1, color_precision=8, layer_difference=1)
             timings["vtracer"] = time.perf_counter() - t
         else:
-            els, est = build_elements(lbl, pal_rgb, opts, timings)
+            label_fill, defs = None, []
+            if opts["gradients"]:
+                t = time.perf_counter()
+                lbl, pal_lab, label_fill, defs = apply_gradients(rgba[..., :3], lbl, pal_lab, opts)
+                pal_rgb = oklab_to_rgb8(pal_lab)
+                timings["gradients"] = time.perf_counter() - t
+                stats["n_gradients"] = len(defs)
+            els, est = build_elements(lbl, pal_rgb, opts, timings, label_fill=label_fill)
             stats.update(est)
-            svg = svg_document(W, H, "".join(els))
+            body = (f"<defs>{''.join(defs)}</defs>" if defs else "") + "".join(els)
+            svg = svg_document(W, H, body)
     timings["total"] = time.perf_counter() - t_all
     stats["timings"] = timings
     stats["bytes"] = len(svg.encode())
