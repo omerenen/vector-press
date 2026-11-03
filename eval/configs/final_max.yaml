@@ -1,0 +1,4 @@
+name: final_max
+description: Final pipeline, preset auto, mode max.
+method: pipeline
+params: {preset: auto, mode: max}

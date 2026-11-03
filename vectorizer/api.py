@@ -25,13 +25,16 @@ DEFAULTS = dict(
     fit_tol=0.6,             # Bezier fit tolerance (px)
     line_tol=0.65,           # straight-line snapping tolerance (px)
     corner_angle=55.0,       # corner sharpness threshold (deg)
-    smooth_sigma=1.0,
-    primitives=True,
-    prim_tol=0.75,
-    precision=2,
+    corner_scale=3.0,        # arm length (px) of the corner detector
+    smooth_sigma=1.0,        # boundary smoothing before curve fitting (samples)
+    primitives=True,         # emit circle/ellipse/rect for closed boundaries that fit them
+    prim_tol=0.75,           # primitive acceptance error (px, robust)
+    precision=2,             # decimals in the SVG output
     vtracer_params=None,     # dict of VTracer parameters for engine="vtracer_raw"
     max_side=2048,           # larger inputs are processed at this size (SVG keeps the original size)
-    seam_width=1.0,
+    upscale=1,               # process at this factor (bicubic) - used by mode="max"
+    upscale_scaled=("corner_scale", "seam_width"),  # px-unit options rescaled when upscaling
+    seam_width=1.0,          # width of the under-stroke along shared borders (removes AA seams)
     line_tls=0.45,           # straight-line test tolerance on TLS fit (px)
     sagitta_tol=0.25,        # staircase-vs-curve test: max parabola sagitta for a straight line (px), 0 = off
     thin_lines="ridge",      # "ridge": rescue sub-pixel lines; "both": + bridge diagonal saddles (off: +33% bytes)
@@ -40,13 +43,17 @@ DEFAULTS = dict(
     subpixel=True,           # move boundary samples to the anti-aliasing implied edge position
     gradients=True,          # fit linear/radial gradients to banded colour ramps (W6)
     grad_tol=0.03,           # max OKLab RMS residual for an accepted gradient
-    slivers=True,
-    merge_frac=0.6,          # palette colours closer than merge_frac*color_radius are merged            # remove thin AA/JPEG bands whose colour mixes their neighbours
+    slivers=True,            # remove thin AA/JPEG bands whose colour mixes their neighbours
+    merge_frac=0.6,          # palette colours closer than merge_frac*color_radius are merged
     mix_suppress=False,      # drop palette colours explainable as AA mixtures (line_art/diagram presets)
 )
 
 
-MAX_MODE = dict(denoise=2)
+# mode="max": process at 2x (only px-scale of the corner detector is adapted, so the fits are effectively
+# twice as tight); measured gains on icon/logo/line_art/diagram, losses on gradients -> not applied there.
+MAX_MODE = dict(upscale=2)
+MAX_MODE_PRESETS = {"icon", "logo", "flat_illustration", "line_art", "diagram"}
+_PX_DEFAULTS = dict(corner_scale=3.0, seam_width=1.0)
 
 
 @dataclass
@@ -110,7 +117,8 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
     opts.update(preset_options(preset))
     stats["preset"] = preset
     if mode == "max":
-        opts.update(MAX_MODE)
+        if preset in MAX_MODE_PRESETS:
+            opts.update(MAX_MODE)
     elif mode != "fast":
         raise ValueError("mode must be 'fast' or 'max'")
     opts.update({k: v for k, v in _map_user_options(options).items() if v is not None})
@@ -126,6 +134,18 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
         W, H = max(1, int(round(W * sc))), max(1, int(round(H * sc)))
         rgba = np.asarray(_Image.fromarray(rgba, "RGBA").resize((W, H), _Image.LANCZOS))
         stats["processed_size"] = [W, H]
+    if opts["upscale"] and opts["upscale"] > 1 and opts["engine"] == "graph":
+        from PIL import Image as _Image
+        f = float(opts["upscale"])
+        if max(H, W) * f <= opts["max_side"]:
+            W, H = int(round(W * f)), int(round(H * f))
+            rgba = np.asarray(_Image.fromarray(rgba, "RGBA").resize((W, H), _Image.BICUBIC))
+            stats["processed_size"] = [W, H]
+            # pixel-unit tolerances are defined at input resolution
+            for k in opts["upscale_scaled"]:
+                opts[k] = opts.get(k, _PX_DEFAULTS.get(k)) * f
+            if opts["upscale_scaled"]:
+                opts["min_area_scale"] = opts["min_area_scale"] * f * f
     if opts["engine"] == "vtracer_raw":
         t = time.perf_counter()
         svg = vtracer_trace(rgba, **(opts["vtracer_params"] or {}))
