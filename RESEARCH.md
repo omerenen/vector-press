@@ -100,3 +100,9 @@ stage (screened on the raster level = mean-colour render vs input at equal bound
   separates real edges from texture on the screening set; a learned edge map would need ~1 s/MP extra on CPU and the
   remaining loss on heavy texture comes from the metric rewarding texture reproduction (VTracer stacks 30 k paths), not
   from misplaced boundaries. Not pursued (no data-driven reason); `ms_merge(edge_weight=...)` is the hook for it.
+- **Routing between region engine and photo engine**: region density after MS (rejected: MS merges smooth photos into
+  few regions), residual texture energy / boundary length (rejected: no separation on tdev_small), phase-1 post-clean-up
+  count + raw fragment count (kept, B-4). A per-image rate–distortion estimate of both engines would be principled but
+  needs a VTracer run + render per image (2–4 s) → not done.
+- Winner: MS (const) + phase-1 pre-clean-up + palette snapping as the default segmentation (tdev 0.702 → 0.724, dev
+  0.9044 → 0.9050, full runs); piecewise-affine and Felzenszwalb initialisation stay options (mixed results, B-5).

@@ -26,7 +26,48 @@ Speed refactors with identical output (palette engine): symmetric sigma filter, 
 histogram, one-sort label medians, uint8 OKLab LUT, low-alpha pass skipped on opaque input.
 
 ## Numbers vs phase2-base (full runs; see tables below — filled from `eval/runs/B_final_*` vs `B_base_*`)
-FULL_RESULTS_PLACEHOLDER
+Base = `phase2-base` code (`B_base_*`), final = branch defaults (`B_final_*`, snapshot of the commit listed
+in the final EXPERIMENTS entry), full splits, `--workers 2` under the shared lock (timings not valid).
+
+### tdev, t_final settings (preset auto, LPIPS + print/cut metrics), 53 images
+| cat (n) | composite base → final | SSIM | ΔE | edge-F | LPIPS | paths (med) | gz KB (med) |
+|---|---|---|---|---|---|---|---|
+| **ALL (53)** | 0.702 → **0.724** | 0.796 → 0.818 | 3.35 → 3.07 | 0.865 → 0.882 | 0.185 → 0.169 | 11 184 → 13 900 | 1 757 → 2 157 |
+| cutfile (9) | 0.630 → 0.658 | 0.707 → 0.746 | 4.10 → 3.73 | 0.826 → 0.849 | 0.290 → 0.271 | 7 665 → 22 483 | 2 191 → 3 204 |
+| logo (17) | 0.734 → 0.755 | 0.795 → 0.817 | 3.02 → 2.85 | 0.882 → 0.906 | 0.177 → 0.165 | 1 618 → 10 024 | 663 → 1 147 |
+| poster (11) | 0.670 → 0.690 | 0.761 → 0.777 | 3.72 → 3.42 | 0.834 → 0.853 | 0.224 → 0.207 | 13 900 → 15 571 | 1 990 → 2 649 |
+| sticker (3) | 0.763 → 0.794 | 0.907 → 0.919 | 1.87 → 1.70 | 0.880 → 0.887 | 0.105 → 0.090 | 13 766 → 13 766 | 2 157 → 2 157 |
+| tshirt (1) | 0.760 → 0.760 | = | = | = | = | = | = |
+| vector_flat (12) | 0.721 → 0.740 | 0.860 → 0.880 | 3.43 → 3.06 | 0.901 → 0.905 | 0.104 → 0.087 | 11 222 → **3 334** | 1 324 → **393** |
+VTracer default on the same set: 0.680 (final is +0.044). Per image: 22 better, 3 worse (> 0.002): 0007 −0.006,
+0013 −0.008, 0040 −0.034 (art-deco skyline: region output 225 KB vs VTracer 1.7 MB). Two mechanisms: (a) clean,
+compact region output instead of the VTracer fallback (0051 0.734→0.829 at 40 KB instead of 1 064 KB; 0012
+0.575→0.712 at 426 KB instead of 1.3 MB; 0001 0.612→0.706; 0037 0.701→0.722 at 168 KB instead of 2 MB); (b) images on
+which the phase-1 region engine produced bad output (thin features lost, 0000/0017/0020/0024/0039/0045/0048/0049,
++0.08…+0.12 each) now go to the photo engine with the normal (not "pure noise") parameters → this raises the median
+path count / bytes. VTracer-like outputs (> 3 000 paths): 37 → 35 of 53.
+Print/cut metrics (t_final, medians): distinct paints 9 676 → 10 879, tiny islands 13 225 → 15 303, thin features
+6 184 → 6 989 (more fallbacks), self-intersections 121 → 110, overlap 3.10 → 2.96; vector_flat: paints 10 022 → 8 195,
+tiny islands 14 750 → 11 941, overlap 2.57 → 1.67, nodes 105 k → 49 k.
+
+### dev (phase 1), final settings, 130 images
+| cat | composite base → final | SSIM | PSNR | ΔE | edge-F | gz B (med) |
+|---|---|---|---|---|---|---|
+| **ALL** | 0.9044 → **0.9050** | 0.9689 → 0.9691 | 32.21 → 32.28 | 1.183 → 1.180 | 0.9557 → 0.9544 | 2 254 → 2 220 |
+| diagram | 0.8942 → 0.8941 | 0.9784 → 0.9782 | 29.12 → 29.25 | 1.139 → 1.142 | 0.9788 → 0.9789 | 2 905 → 2 817 |
+| flat_illustration | 0.9526 → 0.9530 | 0.9891 → 0.9895 | 36.37 → 36.42 | 0.302 → 0.281 | 0.9850 → 0.9847 | 1 876 → 1 884 |
+| gradient | 0.8813 → 0.8833 | 0.9685 → 0.9692 | 33.44 → 33.59 | 1.584 → 1.573 | 0.8419 → 0.8386 | 3 775 → 3 458 |
+| icon | 0.9495 → 0.9508 | 0.9912 → 0.9914 | 34.84 → 34.93 | 0.836 → 0.833 | 0.9980 → 0.9977 | 626 → 626 |
+| line_art | 0.8991 → 0.9001 | 0.9781 → 0.9783 | 28.88 → 28.89 | 1.579 → 1.579 | 0.9790 → 0.9789 | 2 148 → 2 068 |
+| logo | 0.9231 → 0.9226 | 0.9787 → 0.9787 | 32.93 → 32.92 | 0.840 → 0.854 | 0.9863 → 0.9820 | 1 196 → 1 196 |
+| photo | 0.7575 → 0.7575 | identical | | | | |
+All within the phase-2 tolerances (worst: logo composite −0.0005, edge-F −0.0043, ΔE +0.015; gradient edge-F −0.0033).
+Valid SVG 130/130, gap_px 0 on all items, edge deviation 0.2203 → 0.2191 px; corner recall 0.822 → 0.804 (not in the
+tolerance list; MS merges a few small corner regions – stream A may want to look).
+
+### tdev, t_cut settings (cut preset)
+TCUT_PLACEHOLDER
+
 
 ## Files touched
 - Own scope: `vectorizer/pipeline/quantize.py`, `vectorizer/pipeline/preprocess.py`, `vectorizer/pipeline/gradients.py`
