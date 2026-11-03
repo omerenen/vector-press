@@ -410,3 +410,14 @@ flat ≥ 0.2 and ink_edge ≥ 0.4 (exception: tdev_0000, flat 0.187). Dev: all f
 (diagram, noise, flat 0.127) — region better there, but it never explodes; dev photos have ink_edge ≤ 0.23.
 New flag `graphic_override` (fitted on tdev_small + dev_small, 2 rounded thresholds; disclosed): when flat ≥ 0.2 and
 ink_edge ≥ 0.4 the density fallback is disabled and only pure noise (`noise_density`) bails.
+
+### C-10 Combined candidate on tdev_small (18 items, LPIPS + print/cut)
+cand3 = fringe auto + photo_route try + noise_density 0.35 + graphic_override; vs phase2-base (C_ts_base):
+composite 0.689 → **0.725 (+0.035)**, SSIM +0.042, PSNR +0.8 dB, LPIPS 0.182 → **0.157**, ΔE −0.41, edgeF +0.036; every
+category improves (logo +0.050, sticker +0.040, vector_flat +0.032, poster +0.028, cutfile +0.019). Per item: noise
+branch removed on tdev_0000/0024/0045/0048 (+0.077…+0.101), region engine kept on tdev_0012 (+0.101, 1.3 MB → 0.5 MB),
+0039 (+0.107), 0051 (+0.080, 1.06 MB → 46 KB); only loss tdev_0033 −0.004 (fringe). Cost: paths +24 %, gz +14 %,
+nodes / tiny islands up on the items that leave the coarse noise branch (they had been blotchy posterisations).
+cand4 = cand3 + `fit_profile="tight"`: +0.001 more (region-engine items +0.003…+0.006), gz +2 %.
+Per-image oracle over {base, VTracer photo params, region FLAT, region GRADIENT} on tdev_small = 0.735 → cand4 (0.726)
+recovers 80 % of the oracle gap.

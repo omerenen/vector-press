@@ -36,14 +36,14 @@ DEFAULTS = dict(
     upscale_scaled=("corner_scale", "seam_width"),  # px-unit options rescaled when upscaling
     upscale_max_side=3072,   # max mode never processes more than this many px on the long side
     max_region_density=0.008,  # preset="auto": >8 regions per 1000 px (dev: flat art <= 5.7, photos 18-26) -> photo engine
-    photo_route="features",  # preset="auto": "features" = classifier "photo" goes straight to the photo engine;
+    photo_route="try",       # preset="auto": "features" = classifier "photo" goes straight to the photo engine;
                              # "try" = it goes to the gradient preset and reaches the photo engine only through the
                              # region-explosion fallback (JPEG'd flat art is often classified as photo)
-    noise_density=0.1,       # fallback: more regions than this per px (counted before clean-up) = pure noise -> coarse VTracer
-    fit_profile="default",   # "tight": halved fit tolerances at 1x (TIGHT_FIT) for the graph-engine content presets
+    noise_density=0.35,      # fallback: more regions than this per px (counted before clean-up) = pure noise -> coarse VTracer
+    fit_profile="tight",     # "tight": halved fit tolerances at 1x (TIGHT_FIT) for the graph-engine content presets
                              # (= the measured cause of the old max-mode gain, without 4x pixels); not for cut / 2x max
     max_presets=None,        # presets that mode="max" processes at 2x (None = MAX_MODE_PRESETS)
-    graphic_override=False,  # preset="auto": strong-edge graphic art (classifier flat >= 0.2 and ink_edge >= 0.4) keeps
+    graphic_override=True,   # preset="auto": strong-edge graphic art (classifier flat >= 0.2 and ink_edge >= 0.4) keeps
                              # the region engine however many regions it has (only pure noise, noise_density, bails)
     photo_fallback=None,     # region-explosion fallback to the photo engine: None = only with preset "auto", True/False force
     low_alpha=24,
@@ -65,7 +65,7 @@ DEFAULTS = dict(
     slivers=True,            # remove thin AA/JPEG bands whose colour mixes their neighbours
     merge_frac=0.6,          # palette colours closer than merge_frac*color_radius are merged
     mix_suppress=False,      # drop palette colours explainable as AA mixtures (line_art/diagram presets)
-    fringe=None,             # edge-fringe clean-up after quantisation: None/"halo"/"colour"/"both"/"auto" (pipeline/fringe.py;
+    fringe="auto",           # edge-fringe clean-up after quantisation: None/"halo"/"colour"/"both"/"auto" (pipeline/fringe.py;
                              # "auto" = "halo" for the presets in FRINGE_PRESETS, off for line art: it erases thin lines)
     fringe_near=0.09,        # OKLab distance under which a thin edge band counts as an overshoot of its neighbour
 )
@@ -74,7 +74,9 @@ DEFAULTS = dict(
 # mode="max": process at 2x (only px-scale of the corner detector is adapted, so the fits are effectively
 # twice as tight); measured gains on icon/logo/line_art/diagram, losses on gradients -> not applied there.
 MAX_MODE = dict(upscale=2)
-MAX_MODE_PRESETS = {"icon", "logo", "flat_illustration", "line_art", "diagram"}
+# phase 2 (stream C): icon/logo/flat gain nothing from 2x once fast mode fits tightly (fit_profile="tight"); only
+# diagrams keep a resolution gain (1-px outlines) -> 2x for the line presets only.
+MAX_MODE_PRESETS = {"line_art", "diagram"}
 FRINGE_PRESETS = {"icon", "logo", "flat_illustration"}
 TIGHT_FIT = dict(fit_tol=0.3, line_tol=0.33)
 _PX_DEFAULTS = dict(corner_scale=3.0, seam_width=1.0)
@@ -152,7 +154,7 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
     preset: "auto" (classifier) or one of vectorizer.presets.PRESETS. The classifier reports
             image_type in {icon, logo, line_art, gradient, photo}; diagrams are reported as line_art
             and flat illustrations as logo/icon (they share presets).
-    mode:   "fast" (default) or "max" (flat presets processed at up to 2x, slower, see README).
+    mode:   "fast" (default) or "max" (line_art / diagram presets processed at up to 2x, slower, see README).
     options (user-facing): colors (int|"auto"), detail (0..1), corner_sharpness (0..1),
              primitives (bool), gradients (bool), centerline (bool); any internal key of DEFAULTS.
     Returns Result(svg, stats); stats always contains width, height, mode, preset, image_type,

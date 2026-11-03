@@ -41,3 +41,14 @@ def test_fringe_auto_reduces_regions_on_flat_preset_only():
     assert fr.stats["n_regions"] <= base.stats["n_regions"]
     lines = vectorize(img, preset="line_art", fringe="auto")
     assert "fringe_px" not in lines.stats
+
+
+def test_max_mode_upscales_line_presets_only_and_fast_fits_tightly():
+    big = Image.new("RGB", (160, 160), "white")
+    ImageDraw.Draw(big).ellipse((30, 30, 130, 130), fill=(200, 30, 40))
+    img = np.asarray(big)
+    assert "upscale" not in vectorize(img, preset="logo", mode="max").stats
+    assert vectorize(img, preset="line_art", mode="max").stats.get("upscale") == 2.0
+    # the old behaviour stays reachable
+    assert vectorize(img, preset="logo", mode="max",
+                     max_presets=["icon", "logo", "flat_illustration", "line_art", "diagram"]).stats.get("upscale") == 2.0
