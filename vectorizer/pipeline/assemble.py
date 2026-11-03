@@ -80,9 +80,17 @@ def build_elements(lbl, palette_rgb, opts, timings=None, label_fill=None, ctx=No
     if alpha is not None and (alpha[lbl >= 0] < 250).any():
         from scipy import ndimage as _ndi
         idx = np.arange(len(regions))
-        med = _ndi.median(alpha.astype(np.float64), labels=R + 1, index=idx + 1)
+        a16 = alpha.astype(np.int16)
+        P = np.pad(a16, 1, mode="edge")
+        var = np.maximum.reduce([np.abs(P[1:-1, 2:] - a16), np.abs(P[1:-1, :-2] - a16),
+                                 np.abs(P[2:, 1:-1] - a16), np.abs(P[:-2, 1:-1] - a16)])
+        flat = (var <= 10) & (alpha < 250)
+        # only genuinely translucent regions (mostly flat partial alpha), not anti-aliasing bands
+        frac = np.bincount(R.ravel(), weights=flat.ravel().astype(np.float64), minlength=len(regions)) / \
+            np.maximum(np.bincount(R.ravel(), minlength=len(regions)), 1)
+        med = _ndi.median(np.where(flat, alpha, 255).astype(np.float64), labels=R + 1, index=idx + 1)
         opacity = np.clip(np.asarray(med, np.float64) / 255.0, 0, 1)
-        opacity[opacity >= 0.98] = 1.0
+        opacity[(opacity >= 0.98) | (frac < 0.5)] = 1.0
     semi = opacity < 1.0
     depth = _containment(regions, R, lbl, semi)
     converted, stroke_els = set(), []

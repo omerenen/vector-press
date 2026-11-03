@@ -122,3 +122,19 @@ def test_centerline_option_produces_strokes():
     ImageDraw.Draw(im).line((40, 40, 360, 300), fill="black", width=12)
     r = vectorize(im.resize((200, 200), Image.LANCZOS), centerline=True)
     assert "stroke-linecap" in r.svg and r.stats["n_strokes"] >= 1
+
+
+def test_partial_alpha_preserved_but_aa_edges_stay_opaque():
+    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+    ImageDraw.Draw(img).rectangle((10, 10, 50, 50), fill=(0, 0, 255, 128))
+    out = render_svg(vectorize(img).svg, 64, 64)
+    assert abs(int(out[30, 30, 3]) - 128) <= 3 and out[2, 2, 3] == 0
+    big = Image.new("RGBA", (256, 256), (0, 0, 0, 0))
+    ImageDraw.Draw(big).ellipse((20, 20, 236, 236), fill=(200, 30, 30, 255))
+    r = vectorize(big.resize((64, 64), Image.LANCZOS))       # AA edge alpha ramp only
+    assert "fill-opacity" not in r.svg
+
+
+def test_uint16_array_scaled():
+    out = render_svg(vectorize(np.full((10, 10, 3), 40000, np.uint16)).svg, 10, 10)
+    assert abs(int(out[5, 5, 0]) - 156) <= 2
