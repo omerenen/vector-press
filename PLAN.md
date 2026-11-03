@@ -27,3 +27,16 @@ VTracer is used for photo/posterize mode and as a fallback engine (`engine="vtra
 All milestones done; final numbers in REPORT.md (held-out test: composite 0.901 vs 0.817 tuned VTracer).
 Remaining ideas if work resumes: arc fitting for partially occluded circles, alpha-gradient fills, JPEG thin-line
 continuity (crossings), faster quantisation for the 2 s stretch goal, photo mode beyond VTracer.
+
+## Phase 2 plan (2026-11-03)
+Step 1 (lead, sequential, done → tag `phase2-base` = 3117d48, also pushed as `main`): target benchmark from CC0 DALL-E 3
+images (`tdev` tuning / `ttest` held-out), `proc2` overfitting set, LPIPS, print/cut metrics, `cut` / `print` presets.
+Step 2 (parallel, 3 subagents in git worktrees from phase2-base, rules in PHASE2_BRIEF.md, 1 thread each, full evaluations
+serialised with `flock /tmp/claude-0/fulleval.lock`, timings invalid during this step):
+- A `phase2/A` (/home/user/vp-A): primitives (item 3), corner accuracy (item 4), geometry validity (self-intersections).
+- B `phase2/B` (/home/user/vp-B): segmentation of textured AI art (region explosion → photo fallback on 37/53 tdev
+  images), gradients (item 6), quantize speed (item 7).
+- C `phase2/C` (/home/user/vp-C): classifier + fallback (item 5), regressions test_0013/test_0048 (item 8), fast vs max (item 9).
+Fallback rule: if 3 parallel streams prove too slow/unstable, drop to 2 parallel or sequential and note it here.
+Step 3 (lead, sequential): merge A/B/C into `phase2/integration`, full evaluation (target first), ablation of each stream on top
+of the others, keep only winning combinations, speed measured once alone, independent review, merge to main, best-vN.
