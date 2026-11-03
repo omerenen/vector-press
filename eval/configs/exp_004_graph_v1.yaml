@@ -1,0 +1,4 @@
+name: exp_004_graph_v1
+description: exp_002 + TLS straight-line test, depth-level drawing (per-colour merged fills and seams), round-capped seams, min size for rounded-rect primitives.
+method: pipeline
+params: {engine: graph}

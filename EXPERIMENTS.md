@@ -64,3 +64,46 @@ gap counts, corner recall on procedural shapes not better than baseline, primiti
 Hypothesis: maybe the cleaned palette alone fixes most of VTracer's problems (cheap). Result: composite 0.8337
 (baseline 0.8007, graph 0.8785); SSIM 0.944, ΔE 1.66, edge_dev 0.364, corner recall 0.75 (best so far).
 Decision: keep as `engine="vtracer"` option (fast, 0.41 s median); not default.
+
+## exp_004_graph_v1 — layered emission, round seams, TLS line test (2026-11-03)
+Hypothesis: (a) per-depth-level drawing (one fill path per colour per nesting level, seams underneath) cuts element
+count without fidelity loss; (b) round seam caps remove the residual 1-px junction leaks; (c) a total-least-squares
+straight-line test (corner samples sit off the true vertex, so the chord test rejected straight edges) improves corners.
+Result vs exp_002: paths −93 % (399→26), gz −19 %, gap_px 0.12→**0.000**, corner recall 0.675→0.747, prim 0.04→0.14,
+but PSNR −0.67 dB. Ablation `abl_004_no_tls` showed the loss came only from the TLS test with tol 0.65 (it straightens
+gentle curves); `line_tls=0.45` keeps −10 % bytes and the corner gain for −0.001 composite → **keep with 0.45**.
+
+## exp_005_thin_mix — thin-line rescue, saddle bridging, palette mixture suppression
+Hypothesis (from contact sheets): thin AA lines break into dashes (diagonal pixels only touch at corners → 4-connected
+specks → merged away); blurred line art produces grey plateaus at stroke crossings that become palette colours.
+Ablations (vs exp_005 = all three on):
+- `mix_suppress=false`: gradient +0.013, photo +0.018, logo +0.004 but line_art −0.004, diagram −0.004 → **preset option** (line_art/diagram only).
+- ridge rescue only (`thin_lines=ridge`): composite +0.002 and **−25 % bytes** vs all-on.
+- saddle bridging only: same as all-on → bridging is what inflates bytes (+33 %) without fidelity gain → **off by default**.
+- A morphological top-hat ridge detector was also tried: worse on JPEG (ringing rescued as grey specks, dev_0090 PSNR 19.8→18.6) → reverted.
+Visual: clean thin-line art (dev_0096) is now continuous (SSIM 0.962→0.982); JPEG thin lines (dev_0097) are still dashed.
+
+## exp_006_prims — primitive model selection + adaptive corner scale
+Ellipse vs sharp rect vs rounded rect chosen by error with a small axis-aligned sharp-rect prior; rect fits on raw crack
+midpoints (smoothing rounded the corners and produced r≈1.5 on sharp rects); explicit axis-aligned candidate (min-area
+rect gave 1.7° spurious rotation on tiny bars); corner arm length ≤ perimeter/16. Composite ±0, corner recall +0.02
+(flat_illustration +0.13). Primitive recovery fell to 0.08: diagnosis showed **all degraded images recover 0 %**
+(clean ones 83–86 %) because max-error acceptance is vetoed by one noisy pixel and because JPEG creates sliver regions
+that split boxes into 10–27 chains → exp_007.
+
+## exp_007_slivers — robust primitive acceptance + sliver removal
+(a) primitive error = max(p90, max/2) (a few noisy samples no longer veto a fit; real notches >1.5 px still do);
+(b) thin regions (mean thickness < 1.6 px) whose colour lies between their two main neighbours are dissolved
+pixel-wise into the nearer neighbour.
+Result vs exp_006: composite **0.883 (+0.005)**, SSIM +0.002, ΔE −0.034, edge_dev −0.014, corner recall +0.033,
+prim recovery 0.08→0.19, gz −24 %, paths −12 %, every non-photo category improved on every fidelity metric;
+photo −0.010 (handled by its own preset later). **Keep.**
+Ablation `abl_007_merge1` (palette merge radius 0.6→1.0×): icon +0.004, diagram +0.007, prim 0.19→0.26, gz −20 %,
+but gradient −0.005, photo −0.012 → **preset-dependent** → motivates the classifier/presets (W7).
+
+### State of the system (Evaluator note after 7 experiments)
+- Biggest remaining weaknesses by data: gradient (0.853, ΔE 1.9, edge_f 0.76 — banding), photo (0.71, 7 s on ≤512 px),
+  diagram (0.863, edge_dev 0.38 — thin connectors/text bars), JPEG thin line art (dashes).
+- Three parameters (mix_suppress, merge_frac, slivers on photos) split flat vs continuous-tone content the same way →
+  next: heuristic classifier + presets, then gradient fitting (W6) and a photo/posterize path.
+- Not in a local optimum yet: every recent structural change gave measurable gains; parameter tweaks were small.

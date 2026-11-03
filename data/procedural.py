@@ -232,7 +232,7 @@ def gen_diagram(rng: random.Random, W: int, H: int) -> Scene:
                 ww = min(rng.uniform(0.08, 0.25) * w, tx + tw - cur)
                 txt += f'<rect x="{_f(cur)}" y="{_f(ty)}" width="{_f(ww)}" height="{_f(th)}" fill="{stroke}"/>'
                 cur += ww + max(2.0, th * 0.8)
-        meta = {"type": "roundrect" if rr else "rect", "cx": x + w / 2, "cy": y + h / 2, "w": w, "h": h, "r": rr, "angle": 0.0, "stroked": True}
+        meta = {"type": "roundrect" if rr else "rect", "cx": x + w / 2, "cy": y + h / 2, "w": w, "h": h, "r": rr, "angle": 0.0, "stroked": True, "sw": sw}
         corners = [] if rr else [(x, y), (x + w, y), (x + w, y + h), (x, y + h)]
         shapes.append((el + txt, (x0, y0, x1, y1), meta, corners))
     # lines are drawn below boxes (z-order), so boxes stay fully visible

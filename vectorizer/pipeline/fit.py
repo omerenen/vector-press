@@ -220,11 +220,17 @@ def _smooth(P, sigma, closed):
     return Q
 
 
-def fit_piece(P, tol, line_tol, smooth_sigma, t_start=None, t_end=None):
+def fit_piece(P, tol, line_tol, smooth_sigma, t_start=None, t_end=None, line_tls=0.45):
     """Fit samples between two break points. Returns list of segments (without start point)."""
     a, b = P[0], P[-1]
     if len(P) <= 3 or _point_line_dist(P, a, b).max() <= line_tol:
         return [("L", tuple(b))]
+    if line_tls and line_tls > 0 and len(P) >= 6:
+        # total-least-squares line through the interior (end samples may sit off a true corner)
+        c, d = _line_fit(P[1:-1])
+        res = np.abs((P[:, 0] - c[0]) * d[1] - (P[:, 1] - c[1]) * d[0])
+        if res[1:-1].max() <= line_tls and res.max() <= 2 * line_tls:
+            return [("L", tuple(b))]
     Q = _smooth(P, smooth_sigma, False)
     t1 = t_start if t_start is not None else _end_tangent(Q, True)
     t2 = t_end if t_end is not None else _end_tangent(Q, False)
@@ -320,6 +326,12 @@ def ellipse_dist(P, e, n=720):
     return out
 
 
+def robust_err(d):
+    """Primitive acceptance error: tolerant to a few noisy samples, not to real features."""
+    d = np.abs(d)
+    return float(max(np.percentile(d, 90), d.max() / 2.0))
+
+
 def _rounded_rect_sd(Q, hw, hh, r):
     q = np.abs(Q) - np.array([hw - r, hh - r])
     outside = np.sqrt((np.maximum(q, 0) ** 2).sum(1))
@@ -348,14 +360,18 @@ def _min_area_rect(P):
     return best
 
 
-def fit_rounded_rect(P, tol):
-    """Return dict(cx, cy, w, h, r, angle_deg, err) or None."""
-    if len(P) < 12:
+def fit_rounded_rect(P, tol, axis_aligned=False):
+    """Return dict(cx, cy, w, h, r, angle_deg, err, err0) or None."""
+    if len(P) < 8:
         return None
-    mar = _min_area_rect(P)
-    if mar is None:
-        return None
-    _, ctr, wh, ang = mar
+    if axis_aligned:
+        mn, mx = P.min(0), P.max(0)
+        ctr, wh, ang = (mn + mx) / 2, mx - mn, 0.0
+    else:
+        mar = _min_area_rect(P)
+        if mar is None:
+            return None
+        _, ctr, wh, ang = mar
     # normalise angle to (-45, 45]
     w, h = float(wh[0]), float(wh[1])
     while ang > math.pi / 4:
@@ -370,20 +386,80 @@ def fit_rounded_rect(P, tol):
     rmax = min(hw, hh)
     best = None
     for r in np.linspace(0, rmax, 41):
-        e = np.abs(_rounded_rect_sd(Q, hw, hh, r)).max()
+        e = robust_err(_rounded_rect_sd(Q, hw, hh, r))
         if best is None or e < best[1]:
             best = (r, e)
     r, e = best
     # local refine
     lo, hi = max(0, r - rmax / 40), min(rmax, r + rmax / 40)
     for r2 in np.linspace(lo, hi, 11):
-        e2 = np.abs(_rounded_rect_sd(Q, hw, hh, r2)).max()
+        e2 = robust_err(_rounded_rect_sd(Q, hw, hh, r2))
         if e2 < e:
             r, e = r2, e2
-    if e > tol:
+    e0 = robust_err(_rounded_rect_sd(Q, hw, hh, 0.0))
+    if min(e, e0) > tol:
         return None
     return {"cx": float(ctr[0]), "cy": float(ctr[1]), "w": w, "h": h, "r": float(r),
-            "angle": math.degrees(ang), "err": float(e)}
+            "angle": math.degrees(ang), "err": float(e), "err0": e0}
+
+
+def _fit_closed_primitive(chain, S, opts):
+    """Model selection for a closed chain: ellipse/circle vs sharp rect vs rounded rect.
+
+    Errors are max distances (px) of the smoothed boundary samples to the model. A sharp,
+    axis-aligned rectangle gets a small preference (design prior; blur rounds small corners).
+    Returns True if a primitive was assigned.
+    """
+    sig = opts.get("smooth_sigma", 1.0)
+    ptol = opts.get("prim_tol", 0.75)
+    Sm = _smooth(S, sig, True)
+    cands = []
+    e = fit_ellipse(Sm)
+    if e is not None and min(e[2], e[3]) >= 2.5:
+        d = ellipse_dist(Sm, e)
+        if np.sqrt((d ** 2).mean()) <= 0.45 * ptol:
+            cands.append((robust_err(d), "ellipse", e))
+    rr = None
+    for axis_only in (True, False):
+        cand = fit_rounded_rect(S, ptol + 0.3, axis_aligned=axis_only)
+        if cand is not None and (rr is None or min(cand["err"], cand["err0"]) < min(rr["err"], rr["err0"]) - 0.05):
+            rr = cand
+    if rr is not None:
+        axis = abs(rr["angle"]) < 2.0
+        small = min(rr["w"], rr["h"]) < 10
+        bias = 0.15 if axis else 0.0
+        tol0 = ptol + (0.3 if (axis and small) else 0.0)
+        if min(rr["w"], rr["h"]) >= 2 and rr["err0"] <= tol0:
+            cands.append((rr["err0"] - bias, "rect0", rr))
+        if rr["r"] >= 0.75 and min(rr["w"], rr["h"]) >= 6 and rr["err"] <= ptol and rr["err"] < rr["err0"] - 0.1:
+            cands.append((rr["err"], "rrect", rr))
+    cands = [c for c in cands if c[0] <= ptol]
+    if not cands:
+        return False
+    err, kind, m = min(cands, key=lambda c: c[0])
+    if kind == "ellipse":
+        cx, cy, a, b, th = m
+        if abs(a - b) <= max(0.35, 0.015 * max(a, b)):
+            r = (a + b) / 2
+            m = (cx, cy, r, r, 0.0)
+            chain.prim = {"type": "circle", "cx": cx, "cy": cy, "r": r}
+        else:
+            chain.prim = {"type": "ellipse", "cx": cx, "cy": cy, "rx": a, "ry": b, "angle": math.degrees(th)}
+        chain.geom = ellipse_geom(m, _is_cw(S))
+        return True
+    rr = dict(m)
+    if kind == "rect0":
+        rr["r"] = 0.0
+    if abs(rr["angle"]) < 0.75:
+        rr["angle"] = 0.0
+    if rr["r"] < 0.75:
+        rr["r"] = 0.0
+    chain.prim = {"type": "rect", **rr}
+    g = rrect_geom(rr)
+    if not _is_cw(S):
+        g = reverse_geom(g)
+    chain.geom = g
+    return True
 
 
 def ellipse_geom(e, ccw_region_right=True):
@@ -438,35 +514,12 @@ def fit_chain(chain, opts):
         chain.geom = {"start": tuple(pts[0]), "segs": [("L", tuple(pts[-1]))]}
         return
     if closed and opts.get("primitives", True) and n >= 12:
-        Sm = _smooth(S, sig, True)
-        ptol = opts.get("prim_tol", 0.75)
-        e = fit_ellipse(Sm)
-        if e is not None and min(e[2], e[3]) >= 2.0:
-            d = ellipse_dist(Sm, e)
-            if d.max() <= ptol and np.sqrt((d ** 2).mean()) <= 0.4 * ptol:
-                cx, cy, a, b, th = e
-                if abs(a - b) <= max(0.35, 0.015 * max(a, b)):
-                    r = (a + b) / 2
-                    e = (cx, cy, r, r, 0.0)
-                    chain.prim = {"type": "circle", "cx": cx, "cy": cy, "r": r}
-                else:
-                    chain.prim = {"type": "ellipse", "cx": cx, "cy": cy, "rx": a, "ry": b, "angle": math.degrees(th)}
-                chain.geom = ellipse_geom(e, _is_cw(S))
-                return
-        rr = fit_rounded_rect(Sm, ptol)
-        if rr is not None and min(rr["w"], rr["h"]) >= 3:
-            ang = rr["angle"]
-            if abs(ang) < 0.75:
-                rr["angle"] = 0.0
-            if rr["r"] < 0.75:
-                rr["r"] = 0.0
-            chain.prim = {"type": "rect", **rr}
-            g = rrect_geom(rr)
-            if not _is_cw(S):
-                g = reverse_geom(g)
-            chain.geom = g
+        if _fit_closed_primitive(chain, S, opts):
             return
-    corners = detect_corners(S, closed, opts.get("corner_angle", 55.0), opts.get("corner_scale", 3.0))
+    k = opts.get("corner_scale", 3.0)
+    if closed:
+        k = min(k, max(1.0, _arclen(S, True)[1] / 16.0))
+    corners = detect_corners(S, closed, opts.get("corner_angle", 55.0), k)
     if closed:
         if not corners:
             # split smooth loop in 2 with G1 tangents
@@ -487,7 +540,7 @@ def fit_chain(chain, opts):
     pieces = []
     for a_, b_ in zip(corners[:-1], corners[1:]):
         P = S[a_:b_ + 1]
-        pieces.append(fit_piece(P, tol, line_tol, sig))
+        pieces.append(fit_piece(P, tol, line_tol, sig, line_tls=opts.get("line_tls", 0.45)))
     # corner refinement: intersect adjacent straight pieces
     vertices = [S[c].copy() for c in corners]
     if opts.get("refine_corners", True):

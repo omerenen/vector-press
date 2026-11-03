@@ -25,6 +25,11 @@ DEFAULTS = dict(
     prim_tol=0.75,
     precision=2,
     seam_width=1.0,
+    line_tls=0.45,           # straight-line test tolerance on TLS fit (px)
+    thin_lines="ridge",      # "ridge": rescue sub-pixel lines; "both": + bridge diagonal saddles (off: +33% bytes)
+    slivers=True,
+    merge_frac=0.6,          # palette colours closer than merge_frac*color_radius are merged            # remove thin AA/JPEG bands whose colour mixes their neighbours
+    mix_suppress=False,      # drop palette colours explainable as AA mixtures (line_art/diagram presets)
 )
 
 
@@ -57,7 +62,9 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
     else:
         t = time.perf_counter()
         lbl, pal_rgb, pal_lab, qinfo = quantize(rgba[..., :3], rgba[..., 3], radius=opts["color_radius"],
-                                                max_colors=opts["max_colors"], min_area=opts["min_area"])
+                                                max_colors=opts["max_colors"], min_area=opts["min_area"],
+                                                thin_lines=opts["thin_lines"], mix_suppress=opts["mix_suppress"],
+                                                slivers=opts["slivers"], merge_frac=opts["merge_frac"])
         timings["quantize"] = time.perf_counter() - t
         stats.update(qinfo)
         if opts["engine"] == "vtracer":

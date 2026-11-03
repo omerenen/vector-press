@@ -450,17 +450,24 @@ def primitive_recovery(svg, prims, sx=1.0, sy=1.0, tol=1.5):
                     break
         elif t in ("rect", "roundrect"):
             a = math.radians(p.get("angle", 0.0))
-            cx, cy, w, h = p["cx"], p["cy"], p["w"], p["h"]
-            base = [(-w / 2, -h / 2), (w / 2, -h / 2), (w / 2, h / 2), (-w / 2, h / 2)]
-            gpts = [(cx + x * math.cos(a) - y * math.sin(a), cy + x * math.sin(a) + y * math.cos(a)) for x, y in base]
-            for k, c in cands:
-                if k == "rect":
-                    pts, rr = c
-                    if match_poly(gpts, pts) and abs(rr - p.get("r", 0.0)) <= max(tol, 0.1 * p.get("r", 0.0)):
+            cx, cy = p["cx"], p["cy"]
+            # stroked shapes: the outer or inner edge of the outline is an equally faithful target
+            offs = [0.0] + ([p["sw"] / 2, -p["sw"] / 2] if p.get("sw") else [])
+            for off in offs:
+                w, h = p["w"] + 2 * off, p["h"] + 2 * off
+                r0 = max(0.0, p.get("r", 0.0) + off) if p.get("r", 0.0) > 0 else 0.0
+                base = [(-w / 2, -h / 2), (w / 2, -h / 2), (w / 2, h / 2), (-w / 2, h / 2)]
+                gpts = [(cx + x * math.cos(a) - y * math.sin(a), cy + x * math.sin(a) + y * math.cos(a)) for x, y in base]
+                for k, c in cands:
+                    if k == "rect":
+                        pts, rr = c
+                        if match_poly(gpts, pts) and abs(rr - r0) <= max(tol, 0.1 * r0):
+                            ok = True
+                            break
+                    elif k == "poly" and t == "rect" and match_poly(gpts, c):
                         ok = True
                         break
-                elif k == "poly" and t == "rect" and match_poly(gpts, c):
-                    ok = True
+                if ok:
                     break
         elif t in ("polygon", "star", "triangle"):
             for k, c in cands:

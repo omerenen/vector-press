@@ -13,7 +13,6 @@ Drawing model ("stacked with filled holes"):
 """
 from __future__ import annotations
 
-import math
 import time
 
 import numpy as np
@@ -25,12 +24,12 @@ from .fit import fit_chain, reverse_geom
 from .svgout import _join, fmt, geom_to_tokens, loop_d
 
 
-def _decide_fill_holes(regions, R, lbl):
+def _containment(regions, R, lbl):
+    """Decide hole filling and nesting depth (number of enclosing drawn regions)."""
     trans = lbl < 0
-    if not trans.any():
-        return
+    depth = np.zeros(len(regions), np.int32)
     objs = None
-    for r in regions:
+    for r in sorted(regions, key=lambda r: -(r.loop_area[r.outer] if r.loops else 0)):
         if r.label < 0 or len(r.loops) <= 1:
             continue
         if objs is None:
@@ -40,12 +39,20 @@ def _decide_fill_holes(regions, R, lbl):
             continue
         m = R[sl] == r.rid
         inside = ndi.binary_fill_holes(m) & ~m
+        if not inside.any():
+            continue
         if (inside & trans[sl]).any():
             r.fill_holes = False
+        ids = np.unique(R[sl][inside])
+        depth[ids] = np.maximum(depth[ids], depth[r.rid] + 1)
+    return depth
 
 
-def build_elements(lbl, palette_rgb, opts, timings=None, region_extra=None):
-    """Return (list of SVG element strings, stats)."""
+def build_elements(lbl, palette_rgb, opts, timings=None, region_fill=None):
+    """Return (list of SVG element strings, stats).
+
+    region_fill: optional {rid: (fill_attr_string, seam_colour)} overrides (e.g. gradients).
+    """
     timings = timings if timings is not None else {}
     prec = int(opts.get("precision", 2))
     t = time.perf_counter()
@@ -60,10 +67,9 @@ def build_elements(lbl, palette_rgb, opts, timings=None, region_extra=None):
             fit_chain(c, opts)
     timings["fit"] = time.perf_counter() - t
     t = time.perf_counter()
-    _decide_fill_holes(regions, R, lbl)
+    depth = _containment(regions, R, lbl)
     order = sorted([r for r in regions if r.label >= 0 and r.loops],
-                   key=lambda r: (-r.loop_area[r.outer], r.rid))
-    rank = {r.rid: i for i, r in enumerate(order)}
+                   key=lambda r: (depth[r.rid], -r.loop_area[r.outer], r.rid))
     rev_cache = {}
 
     def oriented(cid, rev):
@@ -77,45 +83,57 @@ def build_elements(lbl, palette_rgb, opts, timings=None, region_extra=None):
     seam_w = opts.get("seam_width", 1.0)
     elements = []
     n_prims = 0
-    for r in order:
-        col = hex_color(palette_rgb[r.label])
-        loops = [r.outer] + ([] if r.fill_holes else [i for i in range(len(r.loops)) if i != r.outer])
-        extra = region_extra.get(r.rid) if region_extra else None
-        fill_attr = f'fill="{col}"' if extra is None else extra
-        outer = r.loops[r.outer]
-        prim = chains[outer[0][0]].prim if len(outer) == 1 else None
-        if len(loops) == 1 and prim is not None and opts.get("primitives", True):
-            elements.append(_prim_element(prim, fill_attr, prec))
-            n_prims += 1
-        else:
-            toks = []
-            for li in loops:
-                toks += loop_d([oriented(cid, rev) for cid, rev in r.loops[li]], prec)
-            rule = ' fill-rule="evenodd"' if len(loops) > 1 else ""
-            elements.append(f'<path {fill_attr}{rule} d="{_join(toks)}"/>')
-        # seams: chains on our outer loop (or unfilled holes) shared with a later-drawn region
-        if seam_w > 0:
-            stoks = []
-            for li in loops:
-                for cid, rev in r.loops[li]:
-                    c = chains[cid]
-                    other = c.left if not rev else c.right
-                    if other < 0 or not drawn[other] or rank.get(other, -1) < rank[r.rid]:
-                        continue
-                    stoks += geom_to_tokens(oriented(cid, rev), prec, move=True)
-            if stoks:
-                scol = col if extra is None else _extra_color(extra, col)
-                elements.append(f'<path fill="none" stroke="{scol}" stroke-width="{fmt(seam_w, 2)}" d="{_join(stoks)}"/>')
+    level_start = 0
+    while level_start < len(order):
+        d = depth[order[level_start].rid]
+        level_end = level_start
+        while level_end < len(order) and depth[order[level_end].rid] == d:
+            level_end += 1
+        seams = {}      # colour -> tokens
+        fills = {}      # key -> [attr, tokens]   (insertion ordered)
+        singles = []    # primitive / special elements
+        for r in order[level_start:level_end]:
+            if region_fill and r.rid in region_fill:
+                fill_attr, col = region_fill[r.rid]
+            else:
+                col = hex_color(palette_rgb[r.label])
+                fill_attr = f'fill="{col}"'
+            loops = [r.outer] + ([] if r.fill_holes else [i for i in range(len(r.loops)) if i != r.outer])
+            outer = r.loops[r.outer]
+            prim = chains[outer[0][0]].prim if len(outer) == 1 else None
+            if len(loops) == 1 and prim is not None and opts.get("primitives", True):
+                singles.append(_prim_element(prim, fill_attr, prec))
+                n_prims += 1
+            else:
+                toks = []
+                for li in loops:
+                    toks += loop_d([oriented(cid, rev) for cid, rev in r.loops[li]], prec)
+                fills.setdefault(fill_attr, [fill_attr, []])[1].extend(toks)
+            if seam_w > 0:
+                for li in loops:
+                    for cid, rev in r.loops[li]:
+                        c = chains[cid]
+                        other = c.left if not rev else c.right
+                        if other < 0 or not drawn[other]:
+                            continue
+                        do = depth[other]
+                        if do < d:
+                            continue                       # container is below us: it handles (or fills) the seam
+                        if do == d and other < r.rid:
+                            continue                       # same level: emit each shared chain once
+                        if do > d and r.fill_holes and li != r.outer:
+                            continue                       # nested region over our filled hole: no seam needed
+                        seams.setdefault(col, []).extend(geom_to_tokens(oriented(cid, rev), prec, move=True))
+        for col, toks in seams.items():
+            elements.append(f'<path fill="none" stroke="{col}" stroke-width="{fmt(seam_w, 2)}" '
+                            f'stroke-linecap="round" stroke-linejoin="round" d="{_join(toks)}"/>')
+        for attr, toks in fills.values():
+            elements.append(f'<path {attr} d="{_join(toks)}"/>')
+        elements.extend(singles)
+        level_start = level_end
     timings["assemble"] = time.perf_counter() - t
     stats = {"n_regions": len(order), "n_chains": len(chains), "n_primitives": n_prims}
     return elements, stats
-
-
-def _extra_color(extra, default):
-    i = extra.find('data-seam="')
-    if i < 0:
-        return default
-    return extra[i + 11: extra.find('"', i + 11)]
 
 
 def _prim_element(p, fill_attr, prec):

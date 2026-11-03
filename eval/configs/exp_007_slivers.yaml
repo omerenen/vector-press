@@ -1,0 +1,4 @@
+name: exp_007_slivers
+description: exp_006 + robust primitive acceptance (p90 / max/2) + sliver removal (thin mixture-coloured bands).
+method: pipeline
+params: {engine: graph}

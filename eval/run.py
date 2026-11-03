@@ -244,9 +244,13 @@ if __name__ == "__main__":
     ap.add_argument("--ids", nargs="*")
     ap.add_argument("--categories", nargs="*")
     ap.add_argument("--name")
+    ap.add_argument("--set", nargs="*", default=[], help="override params: key=value (YAML value)")
     a = ap.parse_args()
     cfg = load_cfg(a.config)
     if a.name:
         cfg["name"] = a.name
+    for kv in a.set:
+        k, v = kv.split("=", 1)
+        cfg.setdefault("params", {})[k] = yaml.safe_load(v)
     recs, summ = run(cfg, a.split, a.workers, a.limit, a.ids, a.categories)
     print(fmt_table(summ))

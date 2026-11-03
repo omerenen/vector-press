@@ -1,0 +1,4 @@
+name: exp_006_prims
+description: exp_004 + ridge rescue (no saddle bridging, no mixture suppression) + primitive model selection (ellipse vs sharp rect vs rounded rect, raw samples for rects, axis-aligned candidate) + adaptive corner scale for small loops.
+method: pipeline
+params: {engine: graph}

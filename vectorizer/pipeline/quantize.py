@@ -130,7 +130,8 @@ def _merge_close(pal, palw, radius):
     return np.array(pal, np.float32), np.array(palw)
 
 
-def extract_palette(lab, valid, radius=0.045, max_colors=64, min_frac=0.0002, min_px=8, flat_thresh=None, noise=None):
+def extract_palette(lab, valid, radius=0.045, max_colors=64, min_frac=0.0002, min_px=8, flat_thresh=None, noise=None,
+                    mix_suppress=True, keep_frac=0.01, merge_frac=0.6):
     """Return palette (K,3) OKLab, plus the flat mask used."""
     if noise is None:
         noise = estimate_noise(lab)
@@ -157,8 +158,48 @@ def extract_palette(lab, valid, radius=0.045, max_colors=64, min_frac=0.0002, mi
     min_w = max(min_px, min_frac * N)
     pal, palw = _greedy_palette(cols, cnt, radius, max_colors, min_w)
     pal = _kmeans(cols, cnt.astype(np.float64), pal)
-    pal, palw = _merge_close(pal, palw, radius * 0.6)
+    pal, palw = _merge_close(pal, palw, radius * merge_frac)
+    if mix_suppress:
+        pal, palw = _suppress_mixtures(pal, palw, radius, keep_frac * N)
     return pal, flat
+
+
+def _suppress_mixtures(pal, palw, radius, keep_w):
+    """Drop light-weight palette colours that lie on the segment between two heavier colours.
+
+    Such colours are produced by anti-aliasing / blur where two regions meet (e.g. grey
+    plateaus where blurred black strokes cross). Heavy intermediate colours are kept.
+    """
+    K = len(pal)
+    if K < 3:
+        return pal, palw
+    order = np.argsort(-palw)
+    keep = np.ones(K, bool)
+    for r, k in enumerate(order):
+        if palw[k] >= keep_w or r < 2:
+            continue
+        heavier = [i for i in order[:r] if keep[i]]
+        c = pal[k]
+        found = False
+        for ii in range(len(heavier)):
+            a = pal[heavier[ii]]
+            for jj in range(ii + 1, len(heavier)):
+                b = pal[heavier[jj]]
+                ab = b - a
+                L2 = float((ab * ab).sum())
+                if L2 < 1e-9:
+                    continue
+                t = float(((c - a) * ab).sum()) / L2
+                if 0.08 < t < 0.92:
+                    d = float(np.sqrt(((a + t * ab - c) ** 2).sum()))
+                    if d < 0.6 * radius:
+                        found = True
+                        break
+            if found:
+                break
+        if found:
+            keep[k] = False
+    return pal[keep], palw[keep]
 
 
 def assign_labels(lab, valid, pal, flat, window=2):
@@ -196,6 +237,163 @@ def assign_labels(lab, valid, pal, flat, window=2):
                 bestl[better] = cand[better]
         lbl[ys, xs] = bestl
     lbl[~valid] = TRANSPARENT
+    return lbl
+
+
+def rescue_ridges(lab, lbl, pal, valid, noise=0.0, t=0.04):
+    """Thin-line rescue: pixels that differ from two similar opposite neighbours (a ridge,
+    e.g. the core of a sub-pixel-wide anti-aliased line) but were assigned the neighbours'
+    label are re-assigned to the palette colour that best explains them as a mixture
+    p = bg + alpha (c - bg), alpha >= 0.3. (A top-hat based detector was tried and was
+    worse on JPEG input: ringing got rescued as grey specks, see EXPERIMENTS.md.)"""
+    H, W, _ = lab.shape
+    if H < 3 or W < 3:
+        return lbl
+    t = max(t, 3.0 * noise)
+    P = np.pad(lab, ((1, 1), (1, 1), (0, 0)), mode="edge")
+    c = P[1:-1, 1:-1]
+    ridge = np.zeros((H, W), bool)
+    bg = np.zeros_like(lab)
+    best = np.zeros((H, W), np.float32)
+    for dy, dx in ((0, 1), (1, 0), (1, 1), (1, -1)):
+        a = P[1 - dy:1 - dy + H, 1 - dx:1 - dx + W]
+        b = P[1 + dy:1 + dy + H, 1 + dx:1 + dx + W]
+        ab = np.sqrt(((a - b) ** 2).sum(-1))
+        m = 0.5 * (a + b)
+        pm = np.sqrt(((c - m) ** 2).sum(-1))
+        score = pm - ab
+        sel = (ab < t) & (pm > t) & (score > best)
+        best = np.where(sel, score, best)
+        bg[sel] = m[sel]
+        ridge |= sel
+    ridge &= valid & (lbl >= 0)
+    if not ridge.any():
+        return lbl
+    ys, xs = np.nonzero(ridge)
+    p = lab[ys, xs]
+    g = bg[ys, xs]
+    v = p - g
+    D = pal[None, :, :] - g[:, None, :]                      # (n, K, 3)
+    L2 = (D * D).sum(-1) + 1e-12
+    alpha = (v[:, None, :] * D).sum(-1) / L2
+    resid = np.sqrt(((v[:, None, :] - alpha[..., None] * D) ** 2).sum(-1))
+    vn = np.sqrt((v * v).sum(-1))[:, None]
+    ok = (alpha >= 0.3) & (alpha <= 1.3) & (resid < 0.45 * vn + 0.01) & (np.sqrt(L2) > 1.5 * t)
+    resid = np.where(ok, resid, np.inf)
+    k = resid.argmin(1)
+    good = np.isfinite(resid[np.arange(len(k)), k])
+    cur = lbl[ys, xs]
+    gl = ((pal[None, :, :] - g[:, None, :]) ** 2).sum(-1).argmin(1)
+    upd = good & (cur == gl) & (k != cur)
+    lbl = lbl.copy()
+    lbl[ys[upd], xs[upd]] = k[upd]
+    return lbl
+
+
+def bridge_saddles(lbl, lab, pal, passes=2):
+    """Make thin diagonal structures 4-connected: in 2x2 saddles (A B / B A), flip the
+    background pixel closest in colour to the thin label."""
+    H, W = lbl.shape
+    for _ in range(passes):
+        A = lbl[:-1, :-1]
+        B = lbl[:-1, 1:]
+        C = lbl[1:, :-1]
+        D = lbl[1:, 1:]
+        s1 = (A == D) & (B == C) & (A != B) & (A >= 0) & (B >= 0)
+        if not s1.any():
+            break
+        ys, xs = np.nonzero(s1)
+        # local label counts in a 5x5 window decide which diagonal is the thin structure
+        changed = 0
+        for y, x in zip(ys.tolist(), xs.tolist()):
+            a, b = lbl[y, x], lbl[y, x + 1]
+            if not (lbl[y + 1, x + 1] == a and lbl[y + 1, x] == b and a != b):
+                continue
+            y0, y1, x0, x1 = max(0, y - 2), min(H, y + 4), max(0, x - 2), min(W, x + 4)
+            win = lbl[y0:y1, x0:x1]
+            na, nb = int((win == a).sum()), int((win == b).sum())
+            if na == nb:
+                continue
+            thin, other = (a, b) if na < nb else (b, a)
+            if thin == a:
+                cands = [(y, x + 1), (y + 1, x)]
+            else:
+                cands = [(y, x), (y + 1, x + 1)]
+            dists = [float(((lab[cy, cx] - pal[thin]) ** 2).sum()) for cy, cx in cands]
+            cy, cx = cands[int(np.argmin(dists))]
+            lbl[cy, cx] = thin
+            changed += 1
+        if not changed:
+            break
+    return lbl
+
+
+def remove_slivers(lbl, lab, pal, radius=0.045, max_thick=1.6, max_area_frac=0.01):
+    """Remove thin regions (mean thickness < max_thick px) whose colour is a mixture of their two
+    main neighbours (AA / JPEG bands along an edge). Pixels go to the nearer neighbour colour."""
+    H, W = lbl.shape
+    st = ndi.generate_binary_structure(2, 1)
+    comp = np.zeros(lbl.shape, np.int32)
+    nxt = 0
+    clab = []
+    for k in np.unique(lbl):
+        if k < 0:
+            continue
+        c, n = ndi.label(lbl == k, structure=st)
+        comp[c > 0] = c[c > 0] + nxt
+        clab.extend([int(k)] * n)
+        nxt += n
+    if nxt == 0:
+        return lbl
+    area = np.bincount(comp.ravel(), minlength=nxt + 1).astype(np.float64)
+    per = np.zeros(nxt + 1)
+    dh = comp[:, 1:] != comp[:, :-1]
+    dv = comp[1:, :] != comp[:-1, :]
+    np.add.at(per, comp[:, 1:][dh], 1)
+    np.add.at(per, comp[:, :-1][dh], 1)
+    np.add.at(per, comp[1:, :][dv], 1)
+    np.add.at(per, comp[:-1, :][dv], 1)
+    thick = 2 * area / np.maximum(per, 1)
+    cand = np.nonzero((thick < max_thick) & (area < max_area_frac * H * W) & (area > 0))[0]
+    cand = cand[cand > 0]
+    if len(cand) == 0:
+        return lbl
+    slices = ndi.find_objects(comp)
+    lbl = lbl.copy()
+    for cid in cand.tolist():
+        sl = slices[cid - 1]
+        if sl is None:
+            continue
+        y0, y1 = max(0, sl[0].start - 1), min(H, sl[0].stop + 1)
+        x0, x1 = max(0, sl[1].start - 1), min(W, sl[1].stop + 1)
+        sub = comp[y0:y1, x0:x1] == cid
+        ring = ndi.binary_dilation(sub, structure=st) & ~sub
+        nb = lbl[y0:y1, x0:x1][ring]
+        own = clab[cid - 1]
+        nb = nb[(nb >= 0) & (nb != own)]
+        if len(nb) == 0:
+            continue
+        u, cnt = np.unique(nb, return_counts=True)
+        o = np.argsort(-cnt)
+        a = int(u[o[0]])
+        b = int(u[o[1]]) if len(u) > 1 else a
+        c = pal[own]
+        A, B = pal[a], pal[b]
+        if a != b:
+            ab = B - A
+            L2 = float((ab * ab).sum())
+            t = float(((c - A) * ab).sum()) / L2 if L2 > 1e-9 else 0.5
+            d = float(np.sqrt(((A + np.clip(t, 0, 1) * ab - c) ** 2).sum()))
+            mixture = -0.15 < t < 1.15 and d < radius
+        else:
+            mixture = float(np.sqrt(((A - c) ** 2).sum())) < 2 * radius
+        if not mixture:
+            continue
+        ys, xs = np.nonzero(sub)
+        px = lab[y0:y1, x0:x1][ys, xs]
+        da = ((px - A) ** 2).sum(-1)
+        db = ((px - B) ** 2).sum(-1)
+        lbl[y0 + ys, x0 + xs] = np.where(da <= db, a, b)
     return lbl
 
 
@@ -252,17 +450,25 @@ def merge_small_regions(lbl, pal, min_area, passes=3, connectivity=4):
     return lbl
 
 
-def quantize(rgb, alpha, radius=0.045, max_colors=64, min_area=None, window=2, alpha_threshold=128):
+def quantize(rgb, alpha, radius=0.045, max_colors=64, min_area=None, window=2, alpha_threshold=128,
+             thin_lines=True, mix_suppress=True, slivers=True, merge_frac=0.6):
     """Return (labels HxW int32 with -1 transparent, palette_rgb (K,3) float, palette_lab, info dict)."""
     H, W, _ = rgb.shape
     lab = rgb8_to_oklab(rgb)
     valid = alpha >= alpha_threshold
     noise = estimate_noise(lab)
-    pal, flat = extract_palette(lab, valid, radius=radius, max_colors=max_colors, noise=noise)
+    pal, flat = extract_palette(lab, valid, radius=radius, max_colors=max_colors, noise=noise, mix_suppress=mix_suppress,
+                                merge_frac=merge_frac)
     lbl = assign_labels(lab, valid, pal, flat, window=window)
+    if thin_lines in (True, "ridge", "both"):
+        lbl = rescue_ridges(lab, lbl, pal, valid, noise)
+    if thin_lines in (True, "bridge", "both"):
+        lbl = bridge_saddles(lbl, lab, pal)
     if min_area is None:
         min_area = int(np.clip(round(H * W / 25000), 3, 40))
     lbl = merge_small_regions(lbl, pal, min_area)
+    if slivers:
+        lbl = remove_slivers(lbl, lab, pal, radius)
     # drop unused palette entries, recompute colours as mean of assigned pixels (in OKLab)
     used = np.unique(lbl[lbl >= 0])
     remap = np.full(len(pal), -1, np.int32)

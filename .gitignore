@@ -9,3 +9,4 @@ eval/runs/
 /build/
 /dist/
 .DS_Store
+eval/reports/grid_tmp/

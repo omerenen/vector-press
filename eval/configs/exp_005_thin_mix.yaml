@@ -1,0 +1,4 @@
+name: exp_005_thin_mix
+description: exp_004 (line_tls 0.45) + palette mixture suppression + thin-line ridge rescue + saddle bridging.
+method: pipeline
+params: {engine: graph}
