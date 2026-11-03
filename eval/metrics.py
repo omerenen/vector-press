@@ -388,35 +388,32 @@ def primitive_recovery(svg, prims, sx=1.0, sy=1.0, tol=1.5):
             pts = [_apply(M, *p) for p in [(x, y), (x + w, y), (x + w, y + h), (x, y + h)]]
             cands.append(("rect", ([(px * sx, py * sy) for px, py in pts], rr * sx)))
         elif tag in ("path", "polygon"):
+            polys = []
             if tag == "path":
-                segs = parse_path(at.get("d", ""))
-                subpaths = []
-                cur = []
-                ok = True
-                for c, p in segs:
+                # every straight-edged closed subpath is a candidate polygon (same-colour regions
+                # may be merged into one path element)
+                cur, ok = [], True
+                for c, p in parse_path(at.get("d", "")) + [("M", [(0.0, 0.0)])]:
                     if c == "M":
-                        if cur:
-                            subpaths.append(cur)
-                        cur = [p[0]]
+                        if cur and ok:
+                            polys.append(cur)
+                        cur, ok = [p[0]], True
                     elif c == "L":
                         cur.append(p[0])
                     elif c == "Z":
                         pass
                     else:
                         ok = False
-                        break
-                if cur:
-                    subpaths.append(cur)
-                if not ok or len(subpaths) != 1:
-                    continue
-                pts = subpaths[0]
             else:
                 v = [float(x) for x in re.findall(_NUM, at.get("points", ""))]
-                pts = list(zip(v[0::2], v[1::2]))
-            if len(pts) >= 2 and math.hypot(pts[0][0] - pts[-1][0], pts[0][1] - pts[-1][1]) < 1e-6:
-                pts = pts[:-1]
-            pts = [_apply(M, *p) for p in pts]
-            cands.append(("poly", [(px * sx, py * sy) for px, py in pts]))
+                polys.append(list(zip(v[0::2], v[1::2])))
+            for pts in polys:
+                if len(pts) >= 2 and math.hypot(pts[0][0] - pts[-1][0], pts[0][1] - pts[-1][1]) < 1e-6:
+                    pts = pts[:-1]
+                if len(pts) < 3:
+                    continue
+                pts = [_apply(M, *p) for p in pts]
+                cands.append(("poly", [(px * sx, py * sy) for px, py in pts]))
 
     def match_poly(gt_pts, out_pts):
         if len(gt_pts) != len(out_pts):
@@ -439,7 +436,8 @@ def primitive_recovery(svg, prims, sx=1.0, sy=1.0, tol=1.5):
                 if math.hypot(cx - p["cx"], cy - p["cy"]) > tol:
                     continue
                 rt = max(tol, 0.03 * max(p["rx"], p["ry"]))
-                if t == "circle" or abs(p["rx"] - p["ry"]) < 0.5:
+                if t == "circle" or abs(p["rx"] - p["ry"]) <= rt:
+                    # (near-)circle: orientation is undefined, compare radii only
                     ok = abs(rx - p["rx"]) <= rt and abs(ry - p["ry"]) <= rt
                 else:
                     da = (ang - p.get("angle", 0.0)) % 180

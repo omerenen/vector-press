@@ -22,3 +22,13 @@ def test_primitive_recovery_matches_circle_and_poly():
              {"type": "triangle", "points": [(10, 10), (30, 10), (20, 30)]}]
     rec, per = M.primitive_recovery(svg, prims)
     assert rec == 1.0
+
+
+def test_primitive_recovery_multi_subpath_and_round_ellipse():
+    svg = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">'
+           '<path d="M0 0h5v5h-5zM10 10L30 10L20 30Z"/>'
+           '<ellipse cx="60" cy="60" rx="20.4" ry="20" transform="rotate(37 60 60)"/></svg>')
+    prims = [{"type": "triangle", "points": [(10, 10), (30, 10), (20, 30)]},
+             {"type": "ellipse", "cx": 60, "cy": 60, "rx": 20.2, "ry": 20.0, "angle": 120.0}]
+    rec, per = M.primitive_recovery(svg, prims)
+    assert rec == 1.0

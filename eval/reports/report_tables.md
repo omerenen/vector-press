@@ -126,11 +126,11 @@
 |---|---|---|---|---|---|
 | corner_recall | 0.483 | 0.605 | 0.492 | 0.773 | 0.716 |
 | corner_err | 1.114 | 1.082 | 1.129 | 1.037 | 1.049 |
-| prim_recovery | 0.000 | 0.000 | 0.000 | 0.366 | 0.300 |
+| prim_recovery | 0.000 | 0.000 | 0.000 | 0.417 | 0.317 |
 | gap_px | 0.000 | 6668.992 | 0.000 | 0.000 | 0.000 |
 | edge_dev | 0.713 | 0.679 | 0.617 | 0.263 | 0.227 |
 
-Primitive recovery pooled by type (final): {'circle': '1/2', 'ellipse': '0/3', 'rect': '31/61', 'roundrect': '12/28', 'star': '0/4', 'triangle': '0/1'}
+Primitive recovery pooled by type (final): {'circle': '1/2', 'ellipse': '1/3', 'rect': '31/61', 'roundrect': '12/28', 'star': '1/4', 'triangle': '1/1'}
 
 Valid SVG rate: final 1.000, final max 1.000
 
