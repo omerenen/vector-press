@@ -1,0 +1,4 @@
+name: exp_003_quant_vtracer
+description: OKLab palette quantization (AA-aware) feeding VTracer (exact colours, stacked, spline).
+method: pipeline
+params: {engine: vtracer}

@@ -1,0 +1,24 @@
+# PLAN — vector-press (raster → SVG engine on top of VTracer)
+
+Resume protocol: `git pull`, read this file and `EXPERIMENTS.md`, rebuild data with
+`python -m data.build` (deterministic), then continue with the first unchecked item.
+
+Environment measured: Intel Xeon @ 2.10 GHz, 4 vCPU, 15 GB RAM, no GPU, Python 3.12 venv.
+Blocked hosts (logged): download.pytorch.org, huggingface.co → LPIPS backbone weights unavailable;
+LPIPS is computed only when the weights are already in the torch cache (`eval: lpips: true`).
+
+## Milestones
+- [x] M1  env, dataset builder (dev/test, 130 images each, 7 categories), metrics, runner, contact sheets, baseline exp_000
+- [ ] M1b per-category VTracer grid search (exp_001_baseline_tuned) — running
+- [ ] M2  preprocessing & quantization (W1, W2): OKLab palette, AA-aware assignment, speckle merge  ← first version done (exp_002)
+- [ ] M3  geometry (W3–W5): shared boundary graph (done v0), corners, curves, primitives, gaps
+- [ ] M4  gradients (W6), centerline (W8), classifier + presets (W7)
+- [ ] M5  research extras (subpixel refinement, arc fitting, optional learned parts)
+- [ ] M6  final held-out test evaluation, independent review, fresh-clone test
+- [ ] M7  API/CLI polish, README (TR), REPORT (TR), LICENSES
+
+## Architecture (current)
+load → quantize (OKLab palette, mixed-pixel aware) → region labels → crack-lattice boundary graph
+→ per-chain fit (corners, lines, Schneider Béziers, ellipse/rect/rounded-rect primitives)
+→ stacked drawing with filled holes + seam strokes → compact SVG.
+VTracer is used for photo/posterize mode and as a fallback engine (`engine="vtracer"`).

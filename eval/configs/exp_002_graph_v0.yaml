@@ -1,0 +1,4 @@
+name: exp_002_graph_v0
+description: OKLab palette quantization (AA-aware) + shared boundary graph + corner/line/Bezier fitting + primitives + seam strokes.
+method: pipeline
+params: {engine: graph}
