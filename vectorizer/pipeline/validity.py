@@ -105,12 +105,17 @@ def _polyline_geom(c, raw=False, simplify=0.25):
     return {"start": tuple(start), "segs": mid + [("L", tuple(end))]}
 
 
-def repair_loops(loops, chains, max_rounds=10, prec=2):
+def _area(P):
+    x, y = P[:, 0], P[:, 1]
+    return 0.5 * float(np.dot(x, np.roll(y, -1)) - np.dot(np.roll(x, -1), y))
+
+
+def repair_loops(loops, chains, max_rounds=12, prec=2, refit=None, drop_area=0.5):
     """loops: list of loops (lists of (cid, rev)) that will be emitted. Returns (stats, rings).
 
     Chains of invalid loops are replaced by polylines (sub-pixel samples first, raw crack midpoints
     second). A changed chain can affect other loops; those are re-checked (each chain escalates at most
-    twice, so this terminates). Loops that are still invalid (e.g. a raw polyline crossing an exact,
+    three times: tighter Bezier refit (`refit(chain)` -> geometry, optional), sample polyline, raw polyline). Loops that are still invalid (e.g. a raw polyline crossing an exact,
     snapped primitive edge that deviates from the pixel lattice) are emitted as the valid polygon parts
     of their own outline (`rings`: {tuple(loop): [ring point arrays, oriented like the loop]}); zero-area
     loops get an empty list (nothing is drawn: they cover no area)."""
@@ -134,7 +139,8 @@ def repair_loops(loops, chains, max_rounds=10, prec=2):
     for li, lp in enumerate(loops):
         for cid, _ in lp:
             by_chain.setdefault(cid, []).append(li)
-    level = {}                               # cid -> 0 fitted, 1 sample polyline, 2 raw polyline
+    level = {}                               # cid -> 0 fitted, 1 tight refit, 2 sample polyline, 3 raw polyline
+    dropped = set()
     todo = list(range(len(loops)))
     stats = {"invalid_loops": 0, "repaired": 0, "unrepaired": 0}
     first = True
@@ -142,12 +148,19 @@ def repair_loops(loops, chains, max_rounds=10, prec=2):
         bad = []
         for li in todo:
             lp = loops[li]
-            if any(chains[cid].geom is None for cid, _ in lp):
+            if li in dropped or any(chains[cid].geom is None for cid, _ in lp):
                 continue
-            if not _ring_ok(loop_pts(lp)):
+            P = loop_pts(lp)
+            if not _ring_ok(P):
+                if first and abs(_area(P)) < drop_area:
+                    # collapsed tiny region (its fitted outline has no area: invisible in the output); repairing it
+                    # would only add a sub-pixel island and nodes -> not emitted at all
+                    dropped.add(li)
+                    continue
                 bad.append(li)
         if first:
-            stats["invalid_loops"] = len(bad)
+            stats["invalid_loops"] = len(bad) + len(dropped)
+            stats["dropped"] = len(dropped)
             first = False
         if not bad:
             break
@@ -161,9 +174,18 @@ def repair_loops(loops, chains, max_rounds=10, prec=2):
                 if c.snapped or c.prim is not None:
                     continue                 # exact primitive geometry: valid by construction
                 lv = level.get(cid, 0)
-                if lv >= 2:
+                if refit is None and lv == 0:
+                    lv = 1
+                if lv >= 3:
                     continue
-                c.geom = _polyline_geom(c, raw=(lv == 1))
+                if lv == 0:
+                    g = refit(c)                 # tighter Bezier fit without smoothing (few extra nodes)
+                    if g is None:
+                        g = _polyline_geom(c)
+                        lv = 1
+                    c.geom = g
+                else:
+                    c.geom = _polyline_geom(c, raw=(lv == 2))
                 level[cid] = lv + 1
                 flat.pop(cid, None)
                 changed.add(cid)
@@ -174,6 +196,9 @@ def repair_loops(loops, chains, max_rounds=10, prec=2):
     rings = {}
     for li in range(len(loops)):
         lp = loops[li]
+        if li in dropped:
+            rings[tuple(lp)] = []
+            continue
         if any(chains[cid].geom is None for cid, _ in lp):
             continue
         P = loop_pts(lp)
@@ -181,7 +206,7 @@ def repair_loops(loops, chains, max_rounds=10, prec=2):
             final_bad += 1
             rings[tuple(lp)] = valid_parts(P, prec)
     stats["unrepaired"] = final_bad
-    stats["repaired"] = stats["invalid_loops"] - final_bad
+    stats["repaired"] = stats["invalid_loops"] - final_bad - len(dropped)
     stats["valid_parts"] = len(rings)
     return stats, rings
 

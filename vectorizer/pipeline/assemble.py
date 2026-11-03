@@ -18,7 +18,7 @@ import time
 import numpy as np
 from scipy import ndimage as ndi
 
-from .boundary import assemble_regions, build_graph, label_regions
+from .boundary import Chain, assemble_regions, build_graph, label_regions
 from .color import hex_color
 from .fit import fit_chain, reverse_geom
 from .svgout import _join, fmt, geom_to_tokens, loop_d
@@ -124,7 +124,21 @@ def build_elements(lbl, palette_rgb, opts, timings=None, label_fill=None, ctx=No
         for r in order:
             for li in [r.outer] + ([] if r.fill_holes else [i for i in range(len(r.loops)) if i != r.outer]):
                 emit.extend(split_pinches(r.loops[li], chains))
-        stats_v, ring_fix = repair_loops(emit, chains, prec=prec)
+        refit = None
+        if opts.get("repair_refit", True):
+            from .primfit import _move_end
+            topts = dict(opts, fit_tol=0.5 * opts.get("fit_tol", 0.6), smooth_sigma=0.0, primitives=False)
+
+            def refit(c):
+                old = c.geom
+                tmp = Chain(c.pts, c.left, c.right, c.closed)
+                fit_chain(tmp, topts, ctx)
+                g = tmp.geom
+                if g is None or c.closed:
+                    return g
+                # keep the (possibly snapped / moved) shared junction positions
+                return _move_end(_move_end(g, True, old["start"]), False, old["segs"][-1][-1])
+        stats_v, ring_fix = repair_loops(emit, chains, prec=prec, refit=refit)
         timings["validity"] = time.perf_counter() - tv
     rev_cache = {}
 

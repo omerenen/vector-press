@@ -177,7 +177,7 @@ def test_repair_loops_fixes_crossing_chain():
     a = Chain(np.array([[0, 0], [5, 0], [10, 0]], float), 0, 1, False)
     b = Chain(np.array([[10, 0], [10, 3], [5, 3], [0, 3], [0, 0]], float), 0, 1, False)
     a.geom = {"start": (0.0, 0.0), "segs": [("L", (10.0, 0.0))]}
-    b.geom = {"start": (10.0, 0.0), "segs": [("C", (10.0, 9.0), (0.0, -9.0), (0.0, 0.0))]}   # S-curve crossing y=0
+    b.geom = {"start": (10.0, 0.0), "segs": [("C", (10.0, 9.0), (0.0, -3.0), (0.0, 0.0))]}   # dips below y=0: crossing
     a.samples = np.array([[0, 0], [2.5, 0], [7.5, 0], [10, 0]], float)
     b.samples = np.array([[10, 0], [10, 1.5], [7.5, 3], [2.5, 3], [0, 1.5], [0, 0]], float)
     loop = [(0, False), (1, False)]
@@ -213,3 +213,15 @@ def test_svg_closing_point_exact():
     g = {"start": (1.0, 2.0), "segs": [("L", (5.0, 2.0)), ("L", (5.0, 6.0)), ("L", (1.0, 2.0))]}
     toks = loop_d([g], 2, exact_close=True)
     assert toks[-1] == "z" and "1" not in toks[-3:-1]
+
+
+def test_repair_drops_collapsed_tiny_loop():
+    from vectorizer.pipeline.boundary import Chain
+    from vectorizer.pipeline.validity import repair_loops
+    a = Chain(np.array([[0, 0], [1, 0], [2, 0]], float), 0, 1, False)
+    b = Chain(np.array([[2, 0], [2, 1], [1, 1], [0, 1], [0, 0]], float), 0, 1, False)
+    a.geom = {"start": (0.0, 0.0), "segs": [("L", (2.0, 0.0))]}
+    b.geom = {"start": (2.0, 0.0), "segs": [("L", (0.0, 0.0))]}           # both sides fitted as the same line
+    st, rings = repair_loops([[(0, False), (1, False)]], [a, b])
+    assert st["dropped"] == 1 and rings[((0, False), (1, False))] == []
+    assert b.geom["segs"] == [("L", (0.0, 0.0))]                           # shared chains untouched

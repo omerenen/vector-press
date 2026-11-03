@@ -33,6 +33,7 @@ DEFAULTS = dict(
     rect_refine=True,        # phase 2 A: robust least-squares refinement of rect / rounded-rect fits
     blur_sharp_ratio=3.8,    # phase 2 A: fitted corner radius < ratio x measured edge blur -> sharp rect (0 = off)
     geom_repair=True,        # phase 2 A: split pinched loops, refit self-crossing / zero-area loops as polylines
+    repair_refit=True,       # geom_repair: first try a tighter Bezier refit (fit_tol/2, no smoothing) before polylines
     corner_lines=False,      # phase 2 A: blur-robust corners from straight arm pairs (line-line intersection)
     corner_blur_zone=2.0,    # corner_lines: arclength (px) around a corner ignored as blurred
     prim_polygons=True,      # region_prims: also straight-edged polygons (emitted without junction vertices)
