@@ -1,0 +1,4 @@
+name: P2BASE_final
+description: phase2-base (= best-v4 auto) outputs re-scored with the phase-2 metrics.
+method: external
+params: {dir: /home/user/vector-press/eval/runs/final/test/svgs}

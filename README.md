@@ -32,6 +32,14 @@ pip install -e .          # `vectorize` komutunu kurar
 ```
 
 ```bash
+# 3b) (önerilir) geometri eki: kesim/baskı için kendini kesen yol onarımı + baskı/kesim metrikleri
+pip install -r requirements-geometry.txt
+```
+Kurulum notu: `shapely` (BSD-3) tekerlekleri GEOS kütüphanesini (LGPL-2.1, dinamik bağlı) içerir. Proje kuralı "yalnız
+izin verici lisanslar" olduğu için çekirdek kurulumda değildir; kurulmazsa vektörleştirici yine çalışır, yalnız geometri
+onarımı atlanır (`stats["geom_repair"]`). Ayrıntı: [LICENSES.md](LICENSES.md).
+
+```bash
 # 4) Kontrol
 python -m pytest -q
 vectorize --help
@@ -65,13 +73,20 @@ vectorize tasarim.png -o kesim.svg --preset cut          # vinil / Cricut / laze
 ```
 
 ```bash
-vectorize poster.png -o baski.svg --preset print         # baskı: üst üste katmanlı, tam doğruluk
+vectorize poster.png -o baski.svg --preset print         # baskı: temiz katmanlı vektör (her zaman kendi motoru)
 ```
 
-- `cut`: her bölge gerçek delikleriyle (cutout, üst üste binme yok, dikiş çizgisi yok), renk başına tek yol, en fazla
-  8 düz renk, gradyan yok, arka plan rengi atılır, `cut_width_mm` (varsayılan 100 mm) çıktı genişliğinde `min_feature_mm`
-  (0.5 mm) altındaki ince parçalar ve adacıklar kaldırılır. `silhouette=True` ile tek renk siluet.
-- `print`: üst üste (stacked), gradyanlı, tam doğruluk.
+- `cut`: her bölge gerçek delikleriyle (cutout, üst üste binme yok, dikiş çizgisi yok), en fazla 8 düz renk (birbirine
+  çok yakın renkler — CIE76 ΔE < 6 — tek katmanda birleşir), gradyan ve yarı saydamlık yok, arka plan rengi atılır.
+  `cut_width_mm` (varsayılan 100 mm) çıktı genişliğinde `min_feature_mm` (0.5 mm) altındaki ince parçalar ve adacıklar
+  **azaltılır** (piksel düzeyinde morfolojik açma; eğri uydurmadan sonra birkaç ince uç kalabilir — ttest'te görsel başına
+  medyan ~26). Bir renk birden çok öğeden oluşabilir (yol + daire/dikdörtgen primitifleri); kesim yazılımları katmanları
+  renge göre gruplar. `silhouette=True` ile tek renk siluet.
+- `print`: üst üste (stacked), gradyanlı, VTracer'a hiç düşmeyen bölge motoru: az renk, neredeyse hiç kendini kesen yol
+  yok, çok az örtüşme. **Doğruluğu `auto`dan düşüktür** (dokulu yapay zekâ görsellerinde ince tarama/doku sadeleşir;
+  ttest bileşik 0.625 vs `auto` 0.705) ve dokulu 1024 px görsellerde yavaştır (10–40 s). Fotoğraf benzeri en yüksek
+  doğruluk için `auto` kullanın.
+- Kendini kesen yolların onarımı (`geom_repair`) isteğe bağlı `shapely` paketini ister (aşağıda "Kurulum notu").
 - Hazırlık metrikleri (kapalı yollar, kendini kesen yollar, örtüşme oranı, küçük adacık, ince detay, renk ve düğüm sayısı):
   `eval/printcut.py`.
 
@@ -93,8 +108,8 @@ svg_text = res.svg
 | seçenek (UI için) | değer | etkisi |
 |---|---|---|
 | `preset` | `auto` (sınıflandırıcı) veya hazır ayar adı | içerik türüne göre ayarlar |
-| `mode` | `fast` (varsayılan) / `max` | `max`: düz grafikler 2× çözünürlükte işlenir (daha yüksek doğruluk, ~3-5× süre, ~%20-100 daha büyük dosya) |
-| `colors` | `"auto"` veya tamsayı | en fazla renk sayısı |
+| `mode` | `fast` (varsayılan) / `max` | `fast` artık sıkı eğri toleransıyla çalışır (eski max kazancının çoğu); `max`: yalnız çizim/diyagram 2× çözünürlükte işlenir (1 px çizgiler için, ~3-4× süre, daha büyük dosya) |
+| `colors` | `"auto"` veya tamsayı | en fazla düz dolgu rengi (kesin üst sınır; gradyan durakları ve VTracer yedek yolu hariç) |
 | `detail` | 0 (kaba) … 1 (ince), varsayılan 0.5 | eğri toleransı, renk birleştirme yarıçapı, benek boyutu |
 | `corner_sharpness` | 0 (yuvarlak) … 1 (keskin), varsayılan 0.5 | köşe algılama eşiği |
 | `primitives` | bool | daire/elips/dikdörtgen/yuvarlak dikdörtgen öğeleri |
@@ -106,6 +121,10 @@ svg_text = res.svg
 `n_primitives`, `n_gradients`, `bytes`. Gelişmiş/iç parametreler: `vectorizer/api.py` içindeki `DEFAULTS`.
 
 ## Nasıl çalışır (kısaca)
+
+Faz 2 yenilikleri: Mumford–Shah bölge birleştirme (dokulu yapay zekâ çizimlerinde temiz bölgeler), bölge düzeyinde
+primitif uydurma (daire/elips/dikdörtgen/yuvarlak dikdörtgen/çokgen/yıldız), geometri onarımı (kendini kesen yol yok),
+JPEG kenar saçağı temizliği, motor seçimi (bölge motoru ↔ VTracer) düzeltmeleri, `cut`/`print` ön ayarları.
 
 1. **Yükleme**: her tür PNG/JPEG/WebP/CMYK/16-bit/paletli/alfa → RGBA.
 2. **Sınıflandırma** (W7): 256 px küçük resim özelliklerinden karar kuralları → hazır ayar.

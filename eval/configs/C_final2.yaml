@@ -1,0 +1,4 @@
+name: C_final2
+description: Stream C defaults v2 (gated routing / fringe).
+method: pipeline
+params: {preset: auto}

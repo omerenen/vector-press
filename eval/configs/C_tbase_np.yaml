@@ -1,0 +1,5 @@
+name: C_tbase_np
+description: Current pipeline, preset auto, on the target set (LPIPS + print/cut metrics).
+method: pipeline
+params: {preset: auto}
+lpips: true

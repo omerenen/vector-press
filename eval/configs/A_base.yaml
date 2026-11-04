@@ -1,0 +1,5 @@
+name: A_base
+description: phase2-base pipeline (stream A baseline), preset auto, print/cut metrics on.
+method: pipeline
+params: {preset: auto}
+printcut: true

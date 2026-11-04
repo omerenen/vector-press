@@ -8,7 +8,7 @@
   "printcut": true
  },
  "split": "ttest",
- "wall_s": 420.4093255996704,
+ "wall_s": 358.2185516357422,
  "summary": {
   "ALL": {
    "n": 67,
@@ -28,7 +28,7 @@
    "n_primitives": 0.0,
    "bytes": 7018901.328358209,
    "gz_bytes": 2549355.805970149,
-   "time": 6.112656700850656,
+   "time": 5.412323453507596,
    "pc_open_subpaths": 0.0,
    "pc_self_intersections": 93.44776119402985,
    "pc_overlap_ratio": 2.947562474023339,
@@ -36,8 +36,8 @@
    "pc_tiny_islands": 11672.41791044776,
    "pc_thin_features": 6678.55223880597,
    "pc_n_nodes": 173284.0,
-   "time_median": 5.25414726300005,
-   "time_p95": 18.0277366313996
+   "time_median": 4.68469633100176,
+   "time_p95": 14.111547020205029
   },
   "logo": {
    "n": 11,
@@ -57,7 +57,7 @@
    "n_primitives": 0.0,
    "bytes": 6236475.0,
    "gz_bytes": 2238378.0,
-   "time": 7.112341246727407,
+   "time": 5.460558767818756,
    "pc_open_subpaths": 0.0,
    "pc_self_intersections": 83.54545454545455,
    "pc_overlap_ratio": 2.347027594787321,
@@ -65,8 +65,8 @@
    "pc_tiny_islands": 12632.181818181818,
    "pc_thin_features": 3968.5454545454545,
    "pc_n_nodes": 157333.72727272726,
-   "time_median": 3.4592809620007756,
-   "time_p95": 21.581825618999574
+   "time_median": 2.274341379001271,
+   "time_p95": 16.887695569999778
   },
   "sticker": {
    "n": 4,
@@ -86,7 +86,7 @@
    "n_primitives": 0.0,
    "bytes": 5217478.0,
    "gz_bytes": 1942192.5,
-   "time": 5.05261534975125,
+   "time": 3.484527166498083,
    "pc_open_subpaths": 0.0,
    "pc_self_intersections": 66.75,
    "pc_overlap_ratio": 2.656427288357109,
@@ -94,8 +94,8 @@
    "pc_tiny_islands": 8157.25,
    "pc_thin_features": 5025.25,
    "pc_n_nodes": 124609.75,
-   "time_median": 5.520660495501943,
-   "time_p95": 7.504375219850953
+   "time_median": 3.793144590497832,
+   "time_p95": 4.953715155599275
   },
   "cutfile": {
    "n": 19,
@@ -115,7 +115,7 @@
    "n_primitives": 0.0,
    "bytes": 8627702.263157895,
    "gz_bytes": 3098652.8421052634,
-   "time": 7.478766154578472,
+   "time": 6.769744772842004,
    "pc_open_subpaths": 0.0,
    "pc_self_intersections": 129.3684210526316,
    "pc_overlap_ratio": 3.2588029691209783,
@@ -123,8 +123,8 @@
    "pc_tiny_islands": 15694.631578947368,
    "pc_thin_features": 6818.421052631579,
    "pc_n_nodes": 216366.36842105264,
-   "time_median": 5.317872827999963,
-   "time_p95": 16.81392356490138
+   "time_median": 4.889175850003085,
+   "time_p95": 15.201733558205843
   },
   "vector_flat": {
    "n": 16,
@@ -144,7 +144,7 @@
    "n_primitives": 0.0,
    "bytes": 6771119.25,
    "gz_bytes": 2496930.9375,
-   "time": 5.668419603249731,
+   "time": 5.66632797881357,
    "pc_open_subpaths": 0.0,
    "pc_self_intersections": 73.625,
    "pc_overlap_ratio": 3.023139984903909,
@@ -152,8 +152,8 @@
    "pc_tiny_islands": 10287.3125,
    "pc_thin_features": 7857.75,
    "pc_n_nodes": 162041.5625,
-   "time_median": 4.984430843498558,
-   "time_p95": 12.367381505247977
+   "time_median": 4.449388597000507,
+   "time_p95": 15.391573295002672
   },
   "poster": {
    "n": 17,
@@ -173,7 +173,7 @@
    "n_primitives": 0.0,
    "bytes": 6384176.529411765,
    "gz_bytes": 2328859.529411765,
-   "time": 4.606500779705932,
+   "time": 4.078530466352651,
    "pc_open_subpaths": 0.0,
    "pc_self_intersections": 84.6470588235294,
    "pc_overlap_ratio": 2.985657464218446,
@@ -181,8 +181,8 @@
    "pc_tiny_islands": 8686.70588235294,
    "pc_thin_features": 7554.941176470588,
    "pc_n_nodes": 157487.76470588235,
-   "time_median": 4.340668304001156,
-   "time_p95": 9.287270783801066
+   "time_median": 3.192095293998136,
+   "time_p95": 10.175440840596275
   }
  }
 }

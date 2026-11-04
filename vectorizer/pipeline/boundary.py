@@ -26,6 +26,8 @@ class Chain:
     closed: bool
     geom: list = None        # fitted segments, filled by fitting stage
     prim: dict = None        # primitive description if the whole closed chain is a primitive
+    samples: np.ndarray = None  # boundary samples used for fitting (crack midpoints + sub-pixel shift)
+    snapped: bool = False    # geometry replaced by a piece of a region-level primitive outline
 
 
 @dataclass

@@ -70,6 +70,10 @@ def _flatten_subpaths(d, M, n_curve=8):
     res = []
     for pts, cl in out:
         P = np.array(pts, float)
+        # phase 2 (stream A proposal, all methods): a closed subpath whose last point repeats the first (relative /
+        # arc commands end ~1e-13 px away) is not a self-intersection -> drop the duplicate closing point
+        if cl and len(P) > 3 and np.hypot(*(P[-1] - P[0])) < 1e-6:
+            P = P[:-1]
         P = (np.c_[P, np.ones(len(P))] @ M.T)[:, :2]
         res.append((P, cl))
     return res

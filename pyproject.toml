@@ -19,7 +19,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-eval = ["PyYAML>=6", "pytest>=8"]
+eval = ["PyYAML>=6", "pytest>=8", "pyarrow>=15"]
+# shapely wheels bundle GEOS (LGPL-2.1, dynamically linked) -> optional, see LICENSES.md
+geometry = ["shapely>=2.0"]
 
 [project.scripts]
 vectorize = "vectorizer.cli:main"

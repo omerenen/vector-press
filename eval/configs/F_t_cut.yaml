@@ -1,0 +1,6 @@
+name: F_t_cut
+description: Phase-2 integration, preset cut, target set (LPIPS + print/cut metrics).
+method: pipeline
+params: {preset: cut}
+lpips: true
+printcut: true

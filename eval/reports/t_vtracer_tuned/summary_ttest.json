@@ -42,7 +42,7 @@
   "printcut": true
  },
  "split": "ttest",
- "wall_s": 1719.1346793174744,
+ "wall_s": 693.010910987854,
  "summary": {
   "ALL": {
    "n": 67,
@@ -62,7 +62,7 @@
    "n_primitives": 0.0,
    "bytes": 7047582.611940298,
    "gz_bytes": 2433581.76119403,
-   "time": 35.48525128422375,
+   "time": 11.763825746716412,
    "pc_open_subpaths": 0.0,
    "pc_self_intersections": 71.80597014925372,
    "pc_overlap_ratio": 3.1473685592268357,
@@ -71,8 +71,8 @@
    "pc_thin_features": 6270.074626865671,
    "pc_thin_area_mm2": 16.09375,
    "pc_n_nodes": 181279.83582089553,
-   "time_median": 29.42113272399729,
-   "time_p95": 85.47111895640009
+   "time_median": 10.840262087999974,
+   "time_p95": 29.201690302899976
   },
   "logo": {
    "n": 11,
@@ -92,7 +92,7 @@
    "n_primitives": 0.0,
    "bytes": 3546562.4545454546,
    "gz_bytes": 1379841.0909090908,
-   "time": 38.72360852599972,
+   "time": 11.105870870454536,
    "pc_open_subpaths": 0.0,
    "pc_self_intersections": 48.81818181818182,
    "pc_overlap_ratio": 2.169475993647533,
@@ -101,8 +101,8 @@
    "pc_thin_features": 1751.6363636363637,
    "pc_thin_area_mm2": 16.09375,
    "pc_n_nodes": 82219.63636363637,
-   "time_median": 10.007639161001862,
-   "time_p95": 100.76173410049887
+   "time_median": 8.118645592000007,
+   "time_p95": 29.090919021499957
   },
   "sticker": {
    "n": 4,
@@ -122,7 +122,7 @@
    "n_primitives": 0.0,
    "bytes": 5766954.25,
    "gz_bytes": 2026483.25,
-   "time": 26.631076100748032,
+   "time": 7.71126765824998,
    "pc_open_subpaths": 0.0,
    "pc_self_intersections": 70.75,
    "pc_overlap_ratio": 2.687634122700524,
@@ -130,8 +130,8 @@
    "pc_tiny_islands": 12966.0,
    "pc_thin_features": 4823.25,
    "pc_n_nodes": 141408.0,
-   "time_median": 24.58302215599724,
-   "time_p95": 47.22078946714882
+   "time_median": 8.362635390499975,
+   "time_p95": 10.74498725955001
   },
   "cutfile": {
    "n": 19,
@@ -151,7 +151,7 @@
    "n_primitives": 0.0,
    "bytes": 6380628.894736842,
    "gz_bytes": 2240920.1052631577,
-   "time": 33.761772285157925,
+   "time": 11.305352975421048,
    "pc_open_subpaths": 0.0,
    "pc_self_intersections": 79.84210526315789,
    "pc_overlap_ratio": 2.710888215228522,
@@ -159,8 +159,8 @@
    "pc_tiny_islands": 13825.052631578947,
    "pc_thin_features": 4416.315789473684,
    "pc_n_nodes": 157603.1052631579,
-   "time_median": 24.908375704999344,
-   "time_p95": 79.01517939280122
+   "time_median": 9.818833036000001,
+   "time_p95": 24.89516577749998
   },
   "vector_flat": {
    "n": 16,
@@ -180,7 +180,7 @@
    "n_primitives": 0.0,
    "bytes": 7549745.5,
    "gz_bytes": 2614289.75,
-   "time": 25.64772151368743,
+   "time": 9.727106431124994,
    "pc_open_subpaths": 0.0,
    "pc_self_intersections": 77.0625,
    "pc_overlap_ratio": 3.0659545383154256,
@@ -188,8 +188,8 @@
    "pc_tiny_islands": 17731.5,
    "pc_thin_features": 7179.9375,
    "pc_n_nodes": 185820.1875,
-   "time_median": 21.263974710498587,
-   "time_p95": 63.040610092248244
+   "time_median": 9.011901982499985,
+   "time_p95": 21.82653909625001
   },
   "poster": {
    "n": 17,
@@ -209,7 +209,7 @@
    "n_primitives": 0.0,
    "bytes": 9887067.88235294,
    "gz_bytes": 3256451.470588235,
-   "time": 46.658271777470766,
+   "time": 15.572427375941174,
    "pc_open_subpaths": 0.0,
    "pc_self_intersections": 73.0,
    "pc_overlap_ratio": 4.452751314404958,
@@ -217,8 +217,8 @@
    "pc_tiny_islands": 24388.882352941175,
    "pc_thin_features": 10749.70588235294,
    "pc_n_nodes": 276948.17647058825,
-   "time_median": 47.17943976400056,
-   "time_p95": 85.57404449159803
+   "time_median": 16.433189733999995,
+   "time_p95": 30.54902103480001
   }
  }
 }

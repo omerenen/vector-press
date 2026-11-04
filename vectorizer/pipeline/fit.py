@@ -63,7 +63,8 @@ def turning(P, closed, L):
     return t
 
 
-def detect_corners(P, closed, angle_deg=55.0, k=3.0, ratio=0.72):
+def detect_corners(P, closed, angle_deg=55.0, k=3.0, ratio=0.72, extra=None):
+    """extra: optional per-sample corner strength (radians, 0 = none) from line_pair_corners."""
     n = len(P)
     if n < 5:
         return []
@@ -71,6 +72,9 @@ def detect_corners(P, closed, angle_deg=55.0, k=3.0, ratio=0.72):
     t2 = turning(P, closed, 2 * k)
     thr = math.radians(angle_deg)
     cand = (t1 > thr) & (t1 >= ratio * t2)
+    if extra is not None:
+        cand |= extra > 0
+        t1 = np.maximum(t1, extra)
     if not cand.any():
         return []
     idx = np.nonzero(cand)[0]
@@ -92,6 +96,64 @@ def detect_corners(P, closed, angle_deg=55.0, k=3.0, ratio=0.72):
     if not closed:
         taken = [i for i in taken if 0 < i < n - 1]
     return sorted(taken)
+
+
+def line_pair_corners(P, closed, a=2.0, A=8.0, max_rms=0.25, min_turn_deg=25.0):
+    """Blur-robust corner evidence: straight arms on both sides of a sample (TLS lines over arclength
+    [a, A] before and after it, the blurred zone |s| < a ignored) that meet at a real angle close to it.
+
+    Returns (turn angle in radians, 0 where no corner) per sample and the line intersection points."""
+    n = len(P)
+    turn = np.zeros(n)
+    X = P.copy()
+    if n < 8:
+        return turn, X
+    s, total = _arclen(P, closed)
+    if closed:
+        Pe = np.vstack([P, P, P])
+        se = np.concatenate([s - total, s, s + total])
+        off = n
+    else:
+        Pe, se, off = P, s, 0
+    x, y = Pe[:, 0], Pe[:, 1]
+    cs = [np.concatenate([[0.0], np.cumsum(v)]) for v in (np.ones_like(x), x, y, x * x, y * y, x * y)]
+    si = s
+
+    def arm(lo, hi):
+        i0 = np.searchsorted(se, lo, side="left")
+        i1 = np.searchsorted(se, hi, side="right")
+        m = [c[i1] - c[i0] for c in cs]
+        cnt = np.maximum(m[0], 1)
+        mx, my = m[1] / cnt, m[2] / cnt
+        cxx = m[3] / cnt - mx * mx
+        cyy = m[4] / cnt - my * my
+        cxy = m[5] / cnt - mx * my
+        tr, det = cxx + cyy, cxx * cyy - cxy * cxy
+        disc = np.sqrt(np.maximum(tr * tr / 4 - det, 0))
+        lmin = np.maximum(tr / 2 - disc, 0)
+        th = 0.5 * np.arctan2(2 * cxy, cxx - cyy)
+        return m[0], mx, my, np.sqrt(lmin), np.cos(th), np.sin(th)
+    nL, mxL, myL, rL, dxL, dyL = arm(si - A, si - a)
+    nR, mxR, myR, rR, dxR, dyR = arm(si + a, si + A)
+    ok = (nL >= 4) & (nR >= 4) & (rL <= max_rms) & (rR <= max_rms)
+    if not closed:
+        ok &= (si - A >= 0) & (si + A <= total)
+    # orient: left direction points towards the sample, right direction away from it
+    sL = np.sign((P[:, 0] - mxL) * dxL + (P[:, 1] - myL) * dyL)
+    sR = np.sign((mxR - P[:, 0]) * dxR + (myR - P[:, 1]) * dyR)
+    dxL, dyL, dxR, dyR = dxL * sL, dyL * sL, dxR * sR, dyR * sR
+    cosang = np.clip(dxL * dxR + dyL * dyR, -1, 1)
+    ang = np.arccos(cosang)
+    ok &= ang >= math.radians(min_turn_deg)
+    den = dxL * dyR - dyL * dxR
+    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+        t = ((mxR - mxL) * dyR - (myR - myL) * dxR) / den
+        Xx, Xy = mxL + t * dxL, myL + t * dyL
+        dist = np.hypot(Xx - P[:, 0], Xy - P[:, 1])
+    ok &= np.isfinite(dist) & (dist <= a + 1.0)
+    turn[ok] = ang[ok]
+    X[ok, 0], X[ok, 1] = Xx[ok], Xy[ok]
+    return turn, X
 
 
 # ------------------------------------------------------------------ bezier fitting
@@ -180,6 +242,10 @@ def _end_tangent(P, at_start, L=3.0):
     return _unit(Q[j] - Q[0])
 
 
+REPARAM_ITERS = 3          # phase 2 integration: 3 iterations + stall test (fit -25 %, SSIM equal; phase 1: 6, inf)
+REPARAM_MIN_GAIN = 0.95
+
+
 def fit_cubic(P, t1, t2, tol, depth=0):
     n = len(P)
     if n == 2 or depth > 12:
@@ -191,12 +257,15 @@ def fit_cubic(P, t1, t2, tol, depth=0):
     if err <= tol:
         return [ctrl]
     if err <= 4 * tol:
-        for _ in range(6):
+        for _ in range(REPARAM_ITERS):
             u = _reparam(P, ctrl, u)
             ctrl = _generate(P, u, t1, t2)
+            prev = err
             err, idx = _max_err(P, ctrl, u)
             if err <= tol:
                 return [ctrl]
+            if err > REPARAM_MIN_GAIN * prev:   # Newton reparameterisation stalled: split instead of iterating on
+                break
     idx = min(max(idx, 1), n - 2)
     tc = _unit(P[idx - 1] - P[idx + 1])
     return fit_cubic(P[:idx + 1], t1, tc, tol, depth + 1) + fit_cubic(P[idx:], -tc, t2, tol, depth + 1)
@@ -220,19 +289,22 @@ def _smooth(P, sigma, closed):
     return Q
 
 
-def fit_piece(P, tol, line_tol, smooth_sigma, t_start=None, t_end=None, line_tls=0.45, sagitta_tol=0.25):
-    """Fit samples between two break points. Returns list of segments (without start point)."""
+def fit_piece(P, tol, line_tol, smooth_sigma, t_start=None, t_end=None, line_tls=0.45, sagitta_tol=0.25, trim=(0, 0)):
+    """Fit samples between two break points. Returns list of segments (without start point).
+
+    trim: samples to ignore at the start / end in the straight-line test (blurred corner zones)."""
     a, b = P[0], P[-1]
     if len(P) <= 3 or _point_line_dist(P, a, b).max() <= line_tol:
         return [("L", tuple(b))]
-    if line_tls and line_tls > 0 and len(P) >= 6:
+    t0, t1 = max(1, trim[0]), max(1, trim[1])
+    if line_tls and line_tls > 0 and len(P) >= 6 + (t0 - 1) + (t1 - 1):
         # total-least-squares line through the interior (end samples may sit off a true corner)
-        c, d = _line_fit(P[1:-1])
+        c, d = _line_fit(P[t0:len(P) - t1])
         v = (P[:, 0] - c[0]) * d[1] - (P[:, 1] - c[1]) * d[0]
         res = np.abs(v)
-        if res[1:-1].max() <= line_tls and res.max() <= 2 * line_tls:
+        if res[t0:len(P) - t1].max() <= line_tls and res.max() <= 2 * line_tls + (0.5 if (trim[0] or trim[1]) else 0.0):
             return [("L", tuple(b))]
-        if sagitta_tol > 0 and res[1:-1].max() <= line_tls + 0.2 and res.max() <= 2 * line_tls + 0.2:
+        if sagitta_tol > 0 and res[t0:len(P) - t1].max() <= line_tls + 0.2 and res.max() <= 2 * line_tls + 0.2:
             # staircase noise vs real curvature: sagitta of a parabola fitted along the line
             u = (P[:, 0] - c[0]) * d[0] + (P[:, 1] - c[1]) * d[1]
             half = 0.5 * (u.max() - u.min())
@@ -321,24 +393,55 @@ def fit_ellipse(P):
 
 
 def ellipse_dist(P, e, n=720):
+    """Distance of points P to ellipse e=(cx,cy,a,b,theta) (vectorised Newton on the parametric angle)."""
     cx, cy, a, b, th = e
-    t = np.linspace(0, 2 * math.pi, n, endpoint=False)
     ct, st = math.cos(th), math.sin(th)
-    ex = cx + a * np.cos(t) * ct - b * np.sin(t) * st
-    ey = cy + a * np.cos(t) * st + b * np.sin(t) * ct
-    E = np.column_stack([ex, ey])
-    # chunked nearest distance
-    out = np.empty(len(P))
-    for s in range(0, len(P), 2048):
-        d = ((P[s:s + 2048, None, :] - E[None]) ** 2).sum(-1)
-        out[s:s + 2048] = np.sqrt(d.min(1))
-    return out
+    X = (P[:, 0] - cx) * ct + (P[:, 1] - cy) * st
+    Y = -(P[:, 0] - cx) * st + (P[:, 1] - cy) * ct
+    sx, sy = np.sign(X), np.sign(Y)
+    sx[sx == 0] = 1
+    sy[sy == 0] = 1
+    x, y = np.abs(X), np.abs(Y)                       # first quadrant (symmetry)
+    tg = np.linspace(0.0, math.pi / 2, 33)
+    dg = (x[:, None] - a * np.cos(tg)[None]) ** 2 + (y[:, None] - b * np.sin(tg)[None]) ** 2
+    t = tg[np.argmin(dg, axis=1)]
+    k = a * a - b * b
+    for _ in range(6):
+        c_, s_ = np.cos(t), np.sin(t)
+        f = k * s_ * c_ - x * a * s_ + y * b * c_
+        df = k * (c_ * c_ - s_ * s_) - x * a * c_ - y * b * s_
+        with np.errstate(divide="ignore", invalid="ignore"):
+            step = np.where(np.abs(df) > 1e-12, f / df, 0.0)
+        t = np.clip(t - step, 0.0, math.pi / 2)
+    return np.sqrt((x - a * np.cos(t)) ** 2 + (y - b * np.sin(t)) ** 2)
 
 
 def robust_err(d):
-    """Primitive acceptance error: tolerant to a few noisy samples, not to real features."""
-    d = np.abs(d)
-    return float(max(np.percentile(d, 90), d.max() / 2.0))
+    """Primitive acceptance error: tolerant to a few noisy samples, not to real features.
+
+    max(90th percentile (linear interpolation, as np.percentile), max / 2); partition-based (fast)."""
+    d = np.abs(np.asarray(d, float))
+    n = len(d)
+    if n == 0:
+        return 0.0
+    pos = 0.9 * (n - 1)
+    lo = int(math.floor(pos))
+    hi = min(lo + 1, n - 1)
+    P = np.partition(d, [lo, hi])
+    q = P[lo] + (pos - lo) * (P[hi] - P[lo])
+    return float(max(q, d.max() / 2.0))
+
+
+def robust_err_cols(D):
+    """robust_err of every column of D (N, K) at once (same value as np.percentile(.., 90))."""
+    D = np.abs(D)
+    n = D.shape[0]
+    pos = 0.9 * (n - 1)
+    lo = int(math.floor(pos))
+    hi = min(lo + 1, n - 1)
+    P = np.partition(D, [lo, hi], axis=0)
+    q = P[lo] + (pos - lo) * (P[hi] - P[lo])
+    return np.maximum(q, D.max(0) / 2.0)
 
 
 def _rounded_rect_sd(Q, hw, hh, r):
@@ -346,6 +449,16 @@ def _rounded_rect_sd(Q, hw, hh, r):
     outside = np.sqrt((np.maximum(q, 0) ** 2).sum(1))
     inside = np.minimum(np.maximum(q[:, 0], q[:, 1]), 0)
     return outside + inside - r
+
+
+def _rounded_rect_sd_multi(Q, hw, hh, rs):
+    """_rounded_rect_sd for several radii at once -> (N, K)."""
+    rs = np.asarray(rs, float)[None, :]
+    qx = np.abs(Q[:, :1]) - (hw - rs)
+    qy = np.abs(Q[:, 1:2]) - (hh - rs)
+    outside = np.sqrt(np.maximum(qx, 0) ** 2 + np.maximum(qy, 0) ** 2)
+    inside = np.minimum(np.maximum(qx, qy), 0)
+    return outside + inside - rs
 
 
 def _min_area_rect(P):
@@ -369,7 +482,7 @@ def _min_area_rect(P):
     return best
 
 
-def fit_rounded_rect(P, tol, axis_aligned=False):
+def fit_rounded_rect(P, tol, axis_aligned=False, refine=False, refine_gate=2.0):
     """Return dict(cx, cy, w, h, r, angle_deg, err, err0) or None."""
     if len(P) < 8:
         return None
@@ -393,31 +506,93 @@ def fit_rounded_rect(P, tol, axis_aligned=False):
     Q = (P - ctr) @ np.array([[c, -s], [s, c]])
     hw, hh = w / 2, h / 2
     rmax = min(hw, hh)
-    best = None
-    for r in np.linspace(0, rmax, 41):
-        e = robust_err(_rounded_rect_sd(Q, hw, hh, r))
-        if best is None or e < best[1]:
-            best = (r, e)
-    r, e = best
+    rg = np.linspace(0, rmax, 41)
+    E = robust_err_cols(_rounded_rect_sd_multi(Q, hw, hh, rg))
+    i = int(np.argmin(E))
+    r, e = float(rg[i]), float(E[i])
     # local refine
     lo, hi = max(0, r - rmax / 40), min(rmax, r + rmax / 40)
-    for r2 in np.linspace(lo, hi, 11):
-        e2 = robust_err(_rounded_rect_sd(Q, hw, hh, r2))
+    rg2 = np.linspace(lo, hi, 11)
+    E2 = robust_err_cols(_rounded_rect_sd_multi(Q, hw, hh, rg2))
+    for r2, e2 in zip(rg2.tolist(), E2.tolist()):
         if e2 < e:
             r, e = r2, e2
     e0 = robust_err(_rounded_rect_sd(Q, hw, hh, 0.0))
+    out = {"cx": float(ctr[0]), "cy": float(ctr[1]), "w": w, "h": h, "r": float(r),
+           "angle": math.degrees(ang), "err": float(e), "err0": e0}
+    if refine and min(e, e0) <= refine_gate * tol and (axis_aligned or abs(math.degrees(ang)) >= 1.0):
+        # robust (soft-L1) least squares on the signed distance: the bounding box / hull initialisation
+        # is pulled by a few outlying samples (junction bumps, JPEG specks); the refined fit is not
+        sharp = _refine_rrect(P, ctr, hw, hh, ang, 0.0, True, axis_aligned)
+        if sharp is not None and sharp["err"] < e0:
+            out["sharp"] = sharp
+            out["err0"] = e0 = sharp["err"]
+        rnd = _refine_rrect(P, ctr, hw, hh, ang, r, False, axis_aligned)
+        if rnd is not None and rnd["err"] < e:
+            out.update({k: rnd[k] for k in ("cx", "cy", "w", "h", "r", "angle")})
+            out["err"] = e = rnd["err"]
     if min(e, e0) > tol:
         return None
-    return {"cx": float(ctr[0]), "cy": float(ctr[1]), "w": w, "h": h, "r": float(r),
-            "angle": math.degrees(ang), "err": float(e), "err0": e0}
+    return out
 
 
-def _fit_closed_primitive(chain, S, opts):
-    """Model selection for a closed chain: ellipse/circle vs sharp rect vs rounded rect.
+def _refine_rrect(P, ctr, hw, hh, ang, r, sharp, axis_aligned, f_scale=0.25, iters=12):
+    """Robust (soft-L1 IRLS, Gauss-Newton) refinement of a (rounded) rectangle fit."""
+    x = [float(ctr[0]), float(ctr[1]), hw, hh]
+    if not axis_aligned:
+        x.append(ang)
+    if not sharp:
+        x.append(max(r, 0.5))
+    x = np.array(x, float)
+    k = len(x)
 
-    Errors are max distances (px) of the smoothed boundary samples to the model. A sharp,
+    def res(x):
+        a = 0.0 if axis_aligned else x[4]
+        rr = 0.0 if sharp else min(max(x[-1], 0.0), max(min(x[2], x[3]), 0.0))
+        c, s = math.cos(a), math.sin(a)
+        Q = (P - x[:2]) @ np.array([[c, -s], [s, c]])
+        return _rounded_rect_sd(Q, abs(x[2]), abs(x[3]), rr)
+    f = res(x)
+    h = 1e-4
+    for _ in range(iters):
+        J = np.empty((len(P), k))
+        for j in range(k):
+            xp = x.copy()
+            xp[j] += h
+            J[:, j] = (res(xp) - f) / h
+        w = 1.0 / np.sqrt(1.0 + (f / f_scale) ** 2)
+        A = J.T @ (J * w[:, None]) + 1e-6 * np.eye(k)
+        g = J.T @ (w * f)
+        try:
+            dx = -np.linalg.solve(A, g)
+        except np.linalg.LinAlgError:
+            break
+        # step halving on the soft-L1 cost
+        cost = np.sum(np.sqrt(1 + (f / f_scale) ** 2))
+        t = 1.0
+        while t > 1e-3:
+            fn = res(x + t * dx)
+            if np.sum(np.sqrt(1 + (fn / f_scale) ** 2)) <= cost:
+                break
+            t *= 0.5
+        if t <= 1e-3:
+            break
+        x = x + t * dx
+        f = fn
+        if np.abs(t * dx).max() < 1e-4:
+            break
+    a = 0.0 if axis_aligned else x[4]
+    rr = 0.0 if sharp else min(max(x[-1], 0.0), max(min(x[2], x[3]), 0.0))
+    return {"cx": float(x[0]), "cy": float(x[1]), "w": float(2 * abs(x[2])), "h": float(2 * abs(x[3])), "r": float(rr),
+            "angle": math.degrees(a), "err": robust_err(f)}
+
+
+def choose_closed_primitive(S, opts):
+    """Model selection for a closed boundary: ellipse/circle vs sharp rect vs rounded rect.
+
+    Errors are robust distances (px) of the boundary samples to the model. A sharp,
     axis-aligned rectangle gets a small preference (design prior; blur rounds small corners).
-    Returns True if a primitive was assigned.
+    Returns (prim, geom, err) with geom oriented like S (region on the right), or None.
     """
     sig = opts.get("smooth_sigma", 1.0)
     ptol = opts.get("prim_tol", 0.75)
@@ -430,7 +605,7 @@ def _fit_closed_primitive(chain, S, opts):
             cands.append((robust_err(d), "ellipse", e))
     rr = None
     for axis_only in (True, False):
-        cand = fit_rounded_rect(S, ptol + 0.3, axis_aligned=axis_only)
+        cand = fit_rounded_rect(S, ptol + 0.3, axis_aligned=axis_only, refine=opts.get("rect_refine", False))
         if cand is not None and (rr is None or min(cand["err"], cand["err0"]) < min(rr["err"], rr["err0"]) - 0.05):
             rr = cand
     if rr is not None:
@@ -444,39 +619,52 @@ def _fit_closed_primitive(chain, S, opts):
             cands.append((rr["err"], "rrect", rr))
     cands = [c for c in cands if c[0] <= ptol]
     if not cands:
-        return False
+        return None
     # an ellipse that fits about as well as a (fully) rounded rectangle is the simpler description
     ell = [c for c in cands if c[1] == "ellipse"]
     if ell:
         cands = [(c[0] - 0.1, c[1], c[2]) if c[1] == "ellipse" else c for c in cands]
     err, kind, m = min(cands, key=lambda c: c[0])
+    cw = _is_cw(S)
     if kind == "ellipse":
         cx, cy, a, b, th = m
         if abs(a - b) <= max(0.35, 0.015 * max(a, b)):
             r = (a + b) / 2
             m = (cx, cy, r, r, 0.0)
-            chain.prim = {"type": "circle", "cx": cx, "cy": cy, "r": r}
+            prim = {"type": "circle", "cx": cx, "cy": cy, "r": r}
         else:
-            chain.prim = {"type": "ellipse", "cx": cx, "cy": cy, "rx": a, "ry": b, "angle": math.degrees(th)}
-        chain.geom = ellipse_geom(m, _is_cw(S))
-        return True
+            prim = {"type": "ellipse", "cx": cx, "cy": cy, "rx": a, "ry": b, "angle": math.degrees(th)}
+        return prim, ellipse_geom(m, cw), err
     if kind == "rrect" and m["r"] >= 0.47 * min(m["w"], m["h"]) and abs(m["w"] - m["h"]) < max(1.0, 0.02 * m["w"]):
         r = (m["w"] + m["h"]) / 4                       # fully rounded square == circle
-        chain.prim = {"type": "circle", "cx": m["cx"], "cy": m["cy"], "r": r}
-        chain.geom = ellipse_geom((m["cx"], m["cy"], r, r, 0.0), _is_cw(S))
-        return True
+        prim = {"type": "circle", "cx": m["cx"], "cy": m["cy"], "r": r}
+        return prim, ellipse_geom((m["cx"], m["cy"], r, r, 0.0), cw), err
     rr = dict(m)
+    alt = rr.pop("sharp", None)
     if kind == "rect0":
+        rr.update(alt or {})
         rr["r"] = 0.0
+    elif rr["err0"] <= ptol + 0.3:
+        # keep the sharp alternative: a blur-aware decision (primfit.sharpen_blurred_rect) may prefer it
+        a = dict(alt) if alt else {k: rr[k] for k in ("cx", "cy", "w", "h", "angle")}
+        a["err"] = rr["err0"]
+        rr["alt_sharp"] = a
     if abs(rr["angle"]) < 0.75:
         rr["angle"] = 0.0
     if rr["r"] < 0.75:
         rr["r"] = 0.0
-    chain.prim = {"type": "rect", **rr}
     g = rrect_geom(rr)
-    if not _is_cw(S):
+    if not cw:
         g = reverse_geom(g)
-    chain.geom = g
+    return {"type": "rect", **rr}, g, err
+
+
+def _fit_closed_primitive(chain, S, opts):
+    """Assign chain.prim / chain.geom if the closed chain is a primitive. Returns True on success."""
+    res = choose_closed_primitive(S, opts)
+    if res is None:
+        return False
+    chain.prim, chain.geom, _ = res
     return True
 
 
@@ -669,6 +857,7 @@ def fit_chain(chain, opts, ctx=None):
                 w = np.minimum(1.0, np.minimum(i, len(disp) + 1 - i) / float(tp))
                 disp = disp * w[:, None]
             S[1:-1] = S[1:-1] + disp
+    chain.samples = S
     tol = opts.get("fit_tol", 0.6)
     line_tol = opts.get("line_tol", 0.65)
     sig = opts.get("smooth_sigma", 1.0)
@@ -682,7 +871,12 @@ def fit_chain(chain, opts, ctx=None):
     k = opts.get("corner_scale", 3.0)
     if closed:
         k = min(k, max(1.0, _arclen(S, True)[1] / 16.0))
-    corners = detect_corners(S, closed, opts.get("corner_angle", 55.0), k)
+    lp = None
+    if opts.get("corner_lines", False) and n >= 12:
+        lp_turn, lp_X = line_pair_corners(S, closed, a=opts.get("corner_blur_zone", 2.0))
+        lp = lp_turn
+    corners = detect_corners(S, closed, opts.get("corner_angle", 55.0), k, extra=lp)
+    blurred = set(c for c in corners if lp is not None and lp[c] > 0)
     if closed:
         if not corners:
             # split smooth loop in 2 with G1 tangents
@@ -697,13 +891,20 @@ def fit_chain(chain, opts, ctx=None):
             return
         r = corners[0]
         S = np.vstack([S[r:], S[:r], S[r:r + 1]])
+        blurred = {(c - r) % n for c in blurred} | ({n} if 0 in {(c - r) % n for c in blurred} else set())
         corners = sorted((c - r) % n for c in corners) + [n]
     else:
         corners = [0] + corners + [n - 1]
     pieces = []
+    bz = int(math.ceil(opts.get("corner_blur_zone", 2.0)))
+    trims = []
     for a_, b_ in zip(corners[:-1], corners[1:]):
         P = S[a_:b_ + 1]
-        pieces.append(fit_piece(P, tol, line_tol, sig, line_tls=opts.get("line_tls", 0.45), sagitta_tol=opts.get("sagitta_tol", 0.25)))
+        t0 = bz if a_ in blurred else 0
+        t1_ = bz if b_ in blurred else 0
+        trims.append((t0, t1_))
+        pieces.append(fit_piece(P, tol, line_tol, sig, line_tls=opts.get("line_tls", 0.45),
+                                sagitta_tol=opts.get("sagitta_tol", 0.25), trim=(t0, t1_)))
     # corner refinement: intersect adjacent straight pieces
     vertices = [S[c].copy() for c in corners]
     if opts.get("refine_corners", True):
@@ -716,10 +917,12 @@ def fit_chain(chain, opts, ctx=None):
                 jb = j % nseg
                 B = S[corners[jb]:corners[jb + 1] + 1]
                 if len(A) >= 4 and len(B) >= 4:
-                    ca, da = _line_fit(A[1:-1] if len(A) > 4 else A)
-                    cb, db = _line_fit(B[1:-1] if len(B) > 4 else B)
+                    ta, tb = max(1, trims[j - 1][1]), max(1, trims[jb][0])
+                    ca, da = _line_fit(A[1:len(A) - ta] if len(A) > 3 + ta else A)
+                    cb, db = _line_fit(B[tb:-1] if len(B) > 3 + tb else B)
                     X = _intersect(ca, da, cb, db)
-                    if X is not None and math.hypot(*(X - S[corners[j]])) < 1.5:
+                    lim = 1.5 + (1.0 if (trims[j - 1][1] or trims[jb][0]) else 0.0)
+                    if X is not None and math.hypot(*(X - S[corners[j]])) < lim:
                         vertices[j] = X
                         if closed and j == nseg:
                             vertices[0] = X

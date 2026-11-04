@@ -1,4 +1,196 @@
-# RAPOR — vector-press (raster → SVG)
+# RAPOR — vector-press, Faz 2 (yapay zekâ görsellerinden baskıya / kesime hazır vektör)
+
+Ölçüm donanımı: Intel Xeon @ 2.10 GHz, 4 vCPU, GPU yok. Tüm "ayrılmış" (held-out) sayılar hiçbir ayarda kullanılmayan
+kümelerden. Ayrıntılı günlük: [EXPERIMENTS.md](EXPERIMENTS.md) · araştırma notları: [RESEARCH.md](RESEARCH.md) ·
+bağımsız inceleme: [REVIEW_PHASE2.md](REVIEW_PHASE2.md) · Faz 1 raporu: bu dosyanın sonunda (Ek).
+
+Kümeler:
+- **ttest** (hedef küme, 67 görsel): CC0 lisanslı DALL-E 3 görsellerinden ([OpenDatasets/dalle-3-dataset](https://huggingface.co/datasets/OpenDatasets/dalle-3-dataset),
+  sabit revizyon) istem metnine göre seçilmiş logo / sticker / kesim dosyası / düz vektör / poster görselleri; 1024² ve
+  1792×1024. Ayar için ayrı **tdev** (53 görsel). Gerçek SVG yok → yalnız görüntü metrikleri + LPIPS.
+- **test** (130, Faz 1'in ayrılmış kümesi: ikon/logo/emoji/çizim/diyagram/gradyan/fotoğraf; gerçek SVG'li geometri).
+- **proc2** (60, aşırı uyum kontrolü): yeni tohum (777) ve yeni parametre aralıklarıyla üretilmiş prosedürel sahneler.
+- vectorizer.ai karşılaştırması: `data/target/` klasörü (kullanıcının kendi görselleri + vectorizer.ai çıktıları) bu
+  ortamda yok; karşılaştırma altyapısı hazır (`data/target_local.py`, `eval/configs/vectorizer_ai.yaml`), ölçülemedi.
+
+## 1. Hedef küme sonuçları (ttest, ayrılmış)
+
+| yöntem | bileşik | SSIM | PSNR | LPIPS ↓ | ΔE ort. | kenar-F | gzip KB |
+|---|---|---|---|---|---|---|---|
+| VTracer varsayılan | 0.6541 | 0.762 | 22.0 | 0.207 | 5.09 | 0.854 | 2 549 |
+| VTracer ayarlı (Faz 1 dev ayarı, kategori oracle) | 0.6731 | 0.781 | 23.5 | 0.193 | 4.27 | 0.848 | 2 434 |
+| phase2-base (Faz 2 başlangıcı) | 0.6936 | 0.793 | 25.0 | 0.192 | 3.42 | 0.846 | 2 098 |
+| **final (`auto`)** | **0.7273** | **0.834** | **26.1** | **0.161** | **2.99** | **0.877** | 3 247 |
+| final `print` | 0.6251 | 0.745 | 24.8 | 0.251 | 4.06 | 0.700 | 587 |
+| final `cut` (≤ 8 düz renk, arka plan atılır — doğruluk amacı değil) | 0.3245 | 0.455 | 10.8 | 0.559 | 23.2 | 0.425 | 79 |
+
+Kategoriye göre bileşik (VTracer ayarlı → phase2-base → **final**): logo 0.680 → 0.741 → **0.789**, sticker 0.672 →
+0.735 → **0.755**, kesim dosyası 0.613 → 0.664 → **0.702**, düz vektör 0.692 → 0.678 → **0.722**, poster **0.718** →
+0.701 → 0.715 (posterde ayarlı VTracer hâlâ biraz önde).
+- final, ayarlı VTracer'ı 67 görselin **50**'sinde, varsayılan VTracer'ı **66**'sında geçiyor.
+- phase2-base'e göre: 31 görsel daha iyi (> +0.01), **4 görsel daha kötü** (ttest_0055 −0.095, 0020 −0.068, 0030 −0.065,
+  0029 −0.048). Dördü de sınıflandırıcının "fotoğraf" dediği ama yönlendirmenin bölge motorunda tuttuğu görseller (§6).
+- **Kazancın kaynağı (dürüst okuma, bağımsız incelemenin M1 bulgusu)**: ttest çıktılarının 53/67'si VTracer yolundan
+  geliyor (34'ü bölge patlaması yedeği, 19'u doğrudan fotoğraf sınıfı). Faz 2 kazancının büyük kısmı bu yolun
+  düzeltilmesinden: (1) dokulu yapay zekâ görsellerinin yanlışlıkla "saf gürültü" kaba ayarlarına düşmesi giderildi,
+  (2) VTracer yolu 1792 px görselleri 1024 px'e küçültüyordu — artık doğal boyutta (en fazla 1792 px). Bölge motorunda
+  kalan dokulu görsellerde ortalama kayıp var. Yani hedef kümede "kendi motorumuz VTracer'ı yendi" değil, "doğru
+  görseli doğru motora ve doğru çözünürlükte yolladık" demek doğru.
+- Bedel: dosya boyutu +%55 (2.1 → 3.2 MB gzip; dokulu görseller tam çözünürlükte izleniyor), süre (4 paralel işte) medyan
+  20 s / p95 48 s. Bu görsellerin çoğu zaten 1 MB üstü — hedef kümede kompaktlık kazancı yok.
+
+Baskı / kesim hazırlık metrikleri (ttest ortalamaları, 100 mm çıktı genişliği, en küçük detay 0.5 mm):
+
+| metrik | VTracer ayarlı | final `auto` | final `print` | final `cut` |
+|---|---|---|---|---|
+| açık alt yol | 0 | 0 | 0 | 0 |
+| kendini kesen yol / görsel | 71.8 | 83.0 | 0.19 | **0** |
+| örtüşme oranı (üst üste alan / tuval) | 3.15 | 3.76 | 0.10 | **0.00** |
+| farklı renk sayısı | 12 442 | 20 517 | 1 419 | **6.6** |
+| küçük adacık (< 0.5 mm) | 15 595 | 28 834 | 5 646 | **2.6** |
+| ince detay (< 0.5 mm, açma testi) | 6 270 | 8 282 | 773 | **36** (medyan 25) |
+
+Okuma: `auto` en yüksek görsel doğruluk ama VTracer'ın yığılmış (stacked) çıktısı gibi kesime uygun değil. `cut` kesime
+hazır (kapalı, kesişmeyen, örtüşmeyen, az renkli yollar). `print` ikisinin arasında: temiz katmanlı vektör, ama dokulu
+görsellerde doğruluğu `auto`dan düşük ve yavaş (§6).
+
+## 2. Faz 1 test kümesi ve aşırı uyum kontrolü (ayrılmış)
+
+| küme | VTracer varsayılan | VTracer ayarlı | phase2-base | **final** |
+|---|---|---|---|---|
+| test (130) bileşik | 0.7979 | 0.8170 | 0.9012 | **0.9143** |
+| proc2 (60, yeni tohum ve aralıklar) | — | 0.7957 | — | **0.8897** |
+
+- test kategorileri (phase2-base → final): ikon 0.937 → **0.955**, logo 0.928 → **0.936**, düz illüstrasyon 0.929 →
+  **0.952**, çizim 0.908 → **0.925**, diyagram 0.904 → **0.919**, gradyan 0.878 → **0.893**, **fotoğraf 0.746 → 0.727 (gerileme)**.
+- 61 görsel daha iyi, 5 görsel daha kötü (test_0126 −0.083, test_0122 −0.067 fotoğraflar; test_0020 logo −0.065;
+  test_0125 −0.039; test_0067 −0.011).
+- Faz 1'in iki gerilemesi (madde 8) çözüldü: test_0013 0.851 → **0.948**, test_0048 0.805 → **0.908** (ayarlı VTracer
+  0.882 / 0.806).
+- proc2: final − ayarlı VTracer = +0.094 (Faz 1'de eski prosedürel sahnelerde +0.10) → kazanç görülmemiş üreteç
+  ayarlarına da taşınıyor. **Not (inceleme M6):** A akışı geliştirme sırasında proc2'deki bir hatayı inceleyip düzeltti;
+  proc2 bu yüzden tamamen el değmemiş sayılmaz.
+
+## 3. Geometri: primitifler ve köşeler (test, gerçek SVG'li görseller)
+
+| metrik | VTracer ayarlı | phase2-base | **final** | hedef |
+|---|---|---|---|---|
+| primitif kurtarma | 0.000 | 0.417 | **0.775** | ≥ 0.75 ✅ |
+| köşe konum hatası (px, GT'nin kendi Harris tepesine göre) | 0.580 | 0.408 | **0.363** | ≤ 0.5 ✅ |
+| köşe konum hatası (px, eski tanım: nominal köşeye göre) | 1.129 | 1.037 | 1.035 | ≤ 0.5 ❌ |
+| köşe yakalama | 0.492 | 0.773 | 0.745 | — |
+| sınır sapması (px, 4× render) | 0.617 | 0.264 | **0.197** | — |
+| boşluk pikseli | 0 | 0 | 0 | — |
+
+- Primitifler artık bölge düzeyinde uyduruluyor (daire, elips, dikdörtgen, yuvarlak dikdörtgen, çokgen/yıldız):
+  kavşaklar primitifin üzerine taşınıyor, komşu bölge aynı eğriyi paylaşıyor. proc2'de 0.589 (yeni aralıklarda daha
+  zor şekiller).
+- **Köşe metriği değişti (dürüstlük notu):** eski metrik, çıktının köşesini *nominal* köşe noktasına göre ölçüyordu;
+  ama gerçek SVG'nin kendi render'ı bile bu ölçüye göre 0.44–1.15 px "hatalı" (AA render'da Harris tepesi nominal
+  noktada değil). Yeni tanım çıktının Harris tepesini GT render'ın aynı bölgedeki Harris tepesiyle karşılaştırıyor; tüm
+  yöntemlere aynı kod uygulandı, eski değer de raporlanıyor. Eski tanımla hedef **tutturulamadı**.
+- Geometri onarımı: her halka basit (kendini kesmeyen) — ttest `print`'te kendini kesen yol 0.19/görsel (VTracer 72),
+  `cut`'ta 0. İsteğe bağlı `shapely` paketi gerekir (LGPL-2.1 GEOS içerdiği için çekirdek kurulumda değil). Onarım
+  olmadan dev bileşik skoru değişmiyor (0.9153 vs 0.9151, primitif 0.860 vs 0.863); fark yalnız kesime uygunlukta.
+
+## 4. Hız (sessiz makine, tek süreç, `python -m eval.bench --split test --n 30`, 1024 px)
+
+| sürüm | medyan | p95 | en fazla |
+|---|---|---|---|
+| phase2-base | 2.10 s | 2.90 s | 3.00 s |
+| **final** | **1.45 s** | **2.30 s** | 2.69 s |
+
+- Hedef medyan ≤ 1.2 s **tutturulamadı** (−%31 iyileşme). Niceleme çekirdeği B akışında −%48 hızlandı; yeni kalite
+  aşamaları (MS birleştirme, kenar saçağı temizliği, bölge primitifleri, sıkı uydurma) bunun bir kısmını geri harcıyor.
+  Kalan süre ~10 adıma dağılmış durumda; sonraki adım derlenmiş (numba/Rust) bir sınır grafiği + uydurucu olur.
+- Hedef kümede süre büyük ölçüde VTracer'ın dokulu görsellerdeki süresi: 1792×1024 dokulu görselde 10–30 s;
+  patolojik 3000² doku 121 s / 43 MB (1792 px'e küçültülerek).
+- `print` dokulu 1024 px görselde 7–40 s (bölge sayısı 2–4 bin; uydurma + primitif araması). Düşük bölge bütçesi
+  (0.002) süreyi −%26 kısaltıyor ama doğruluğu −0.026 düşürüyor → reddedildi.
+
+## 5. Yeniden tasarlanan aşamalar ve nedenleri
+
+| aşama | kök neden | denenen alternatifler | sonuç |
+|---|---|---|---|
+| **Bölütleme (B)**: OKLab paleti → Mumford–Shah bölge birleştirme (`segment="ms"`) | Dokulu yapay zekâ görsellerinde palet niceleme on binlerce bölgeye "patlıyor" → tdev'in 37/53'ü VTracer'a düşüyordu | SLIC süperpiksel, kenar korumalı ön filtre, MS birleştirme | MS seçildi; tdev +0.020 (C ile birlikte toplanmıyor), dev ±0, gradyanda kenar-F +0.012 |
+| **Yönlendirme (C + entegrasyon)**: "saf gürültü" eşiği, grafik geçersiz kılma, fotoğraf kararını önce bölge motorunda deneme, VTracer yolunda doğal çözünürlük | Dokulu görseller kaba "gürültü" ayarlarına ve 1024 px'e düşüyordu | öğrenilmiş aile sınıflandırıcısı, özellik eşikleri, yeniden kurma hatası kapısı | Özellik eşikleri + 1792 px; ttest kazancının asıl kaynağı. Yeniden kurma hatası kapısı ayar verisinde ayrışmadı → kaldırıldı |
+| **Primitifler (A)**: zincir düzeyinden bölge düzeyine | Kavşaklarda bölünen dış hatlar tek zincir olarak primitife uymuyordu | zincir birleştirme, RANSAC, bölge halkası + kavşak izdüşümü | Bölge halkası; test primitif 0.42 → 0.78 |
+| **Geometri onarımı (A)** | Bézier aşması kavşaklarda halkaları kendine kestiriyordu (kesiciler için hata) | yerel yeniden uydurma, çokgen yedeği, piksel kafesi yedeği | Üçü sırayla; kesen halka → 0 |
+| **Kenar saçağı temizliği + sıkı uydurma (C)** | JPEG/yeniden ölçekli düz görsellerde renk saçakları; max modun kazancı aslında yarıya inmiş toleranstan geliyordu | 2× işleme, sıkı tolerans 1×'te | Sıkı 1× (aynı kazanç, ⅓ bayt artışı, primitif kaybı yok); 2× yalnız çizim/diyagramda |
+| **Kesim ön ayarı** | — (yeni) | | Bölgeler delikli (cutout), ≤ 8 boya (ΔE < 6 olanlar birleşir), arka plan atılır, < 0.5 mm parçalar azaltılır, opak |
+| **Metrikler** | Köşe metriği GT'nin kendisini bile cezalandırıyordu; kapalı yolun tekrar eden son noktası sahte kesişim sayılıyordu | | Düzeltildi, tüm yöntemlere aynı uygulandı |
+
+**Öğrenilmiş bileşen kullanılmadı.** Gerekçe ölçümle: (1) dev'de sınıflandırıcının toplam maliyeti (görsel başına oracle
+ön ayar − otomatik) yalnız **0.0012** bileşik puan → öğrenilmiş bir sınıflandırıcının kazanacağı bir şey yok; (2) hedef
+kümedeki asıl seçim (bölge motoru mu VTracer mı) için tdev_small'da görsel başına oracle, mevcut kurallardan yalnız
++0.009 yukarıda ve 53 ayar görseli bir model eğitmek için çok az; (3) öğrenilmiş kenar dedektörü / farklılaştırılabilir
+render tam boru hattında denenecek kadar olgunlaşmadı (CPU bütçesi). İzin verici lisanslı ağırlık ve veri kısıtı da
+seçenekleri daraltıyor.
+
+Paralel çalışma: üç alt ajan (A, B, C) kendi git çalışma ağaçlarında çalıştı, sonra birleştirildi. Ablasyon (dev 130 +
+tdev 53): her akış diğerlerinin üstüne kapatıldığında A kapatılırsa primitif 0.86 → 0.48, C kapatılırsa dev −0.007,
+B kapatılırsa tdev dosyaları +%7 büyüyor → üçü de tutuldu.
+
+## 6. Bağımsız inceleme ve yapılanlar
+
+Geliştirme gerekçelerini görmemiş bir inceleyici birleşik kodu, ayrılmış metrikleri ve kontak sayfalarını inceledi
+([REVIEW_PHASE2.md](REVIEW_PHASE2.md)).
+
+| bulgu | yapılan |
+|---|---|
+| **B1** `colors=N` MS motorunda yok sayılıyordu (6 istendi → 47 renk) | Düzeltildi: açık renk sayısı kesin üst sınır; test eklendi |
+| **B2** `shapely` çalışma zamanında gerekiyordu ama bildirilmemişti; tekerleği LGPL-2.1 GEOS içeriyor | İsteğe bağlı `geometry` ekine taşındı; çekirdek kurulum yalnız izin verici lisanslı; shapely yoksa onarım atlanır, çökme yok; test eklendi |
+| **M1** ttest kazancı VTracer ayarlarından geliyor | Doğrulandı, §1'de böyle raporlandı |
+| **M2** VTracer yolu 1792 px görselleri 1024'e küçültüyordu | tdev'de ölçüldü (+0.016), 1792 px'e çıkarıldı |
+| **M3** test fotoğraflarında gerileme | **Düzeltilmedi** (ayrılmış veride ayar yapılmaz). Ayar verisinde bir kapı denendi, ayrışmadı, kaldırıldı. Sınırlama olarak raporlandı |
+| **M4** `cut`: büyük tuvalde arka plan kalıyordu, neredeyse aynı siyahlar ayrı katman, yarı saydamlık | Düzeltildi (arka plan kuralı, CIE76 ΔE < 6 birleştirme, opak dolgu) |
+| **M5** `print` "tam doğruluk" iddiası yanlış, yavaş | README düzeltildi; bütçe alternatifi ölçüldü, reddedildi |
+| **M6** proc2 geliştirmede kullanıldı | Açıkça belirtildi (§2) |
+
+**Dürüstlük notu:** inceleme düzeltmelerinden sonra ttest ikinci kez çalıştırıldı (`auto` 0.7054 → 0.7273, `cut`
+yeniden). Bu değişiklikler (çözünürlük, kesim kuralları, renk sınırı) yalnız tdev/dev üzerinde seçildi; ttest'teki
+dört gerileme için hiçbir şey değiştirilmedi.
+
+## 7. Kalan en büyük 3 sınırlama
+
+1. **Dokulu yapay zekâ görsellerinde kendi motorumuz hâlâ kaybediyor.** Hedef kümenin %79'u VTracer yolundan geçiyor;
+   bölge motorunda tutulan dokulu görseller (ttest_0055/0020/0030/0029) ve bölge motoruna yönlendirilen fotoğraflar
+   (test_0126/0122) geriliyor. Doğru çözüm iki render'ı karşılaştıran görsel başına motor seçimi (~2× süre) ya da
+   tdev benzeri veride eğitilmiş bir kalite tahmincisi; ikisi de yapılmadı. Hedef kümede kompaktlık kazancı yok
+   (≈ 3 MB gzip).
+2. **`print` ön ayarı yavaş ve `auto`dan az doğru.** Temiz katmanlı çıktı (kendini kesen yol ≈ 0, örtüşme ≈ 0.1) için
+   dokuyu sadeleştiriyor; dokulu görselde 7–40 s. Yumuşak (bulanık) sınırlar ve ince tarama kaybolabiliyor.
+3. **Hız ve kapsam.** 1024 px medyan 1.45 s (hedef 1.2 s). Hedef küme vekil: DALL-E 3 istemlerinden seçildi, sticker
+   (4) ve t-shirt (ttest'te 0) az; "kesim dosyası" istemli görsellerin çoğu aslında resimsel. Kullanıcının kendi
+   görselleri ve vectorizer.ai çıktılarıyla (data/target) karşılaştırma yapılamadı. Geometri onarımı LGPL'li GEOS'a
+   (isteğe bağlı shapely) bağlı.
+
+## 8. Tamamlanma kriterleri (Faz 2)
+
+| kriter | durum |
+|---|---|
+| Hedef küme ölçüldü, önce raporlandı (vectorizer.ai varsa karşılaştırma) | ✅ ttest; vectorizer.ai verisi yok (altyapı hazır) |
+| Baskı/kesim metrikleri ve ön ayarları değerlendirildi | ✅ §1 (print sınırlamalarıyla) |
+| Madde 3 primitif ≥ 0.75 | ✅ 0.775 (test) |
+| Madde 4 köşe hatası ≤ 0.5 px | ✅ yeni tanımla 0.363; eski tanımla ❌ 1.035 (§3) |
+| Madde 5 sınıflandırıcı oracle vs otomatik | ✅ 0.0012 fark; öğrenilmiş sınıflandırıcı gereksiz |
+| Madde 6 gradyanlar | ⚠️ parçalı-afin MS + doğrusal gradyan seçenek olarak var (gradyanda kenar-F +0.012, PSNR −0.9 dB → varsayılan değil); test gradyan 0.878 → 0.893 |
+| Madde 7 hız medyan ≤ 1.2 s | ❌ 1.45 s (−%31) |
+| Madde 8 test_0013 / test_0048 | ✅ 0.948 / 0.908 |
+| Madde 9 fast vs max | ✅ max yalnız çizim/diyagram; diğerlerinde 1× sıkı uydurma |
+| Gerileme yok | ⚠️ test fotoğraf −0.019, ttest 4 görsel, test 5 görsel (§1, §2) |
+| %100 geçerli SVG | ✅ test, ttest, proc2, dev, tdev; uç durumlar (1×1 … 3000×6, saydam, 16-bit, paletli, CMYK) |
+| Bağımsız inceleme | ✅ §6 |
+| Taze klon kurulumu + testler | ✅ boş dizine klon → yeni venv → `requirements.txt`: 69 test geçti, 2 atlandı (shapely yok), CLI çalıştı; `+ requirements-geometry.txt`: 85/85 |
+| Durdurma ölçütü | Son ayar denemeleri (bütçe 0.002, yeniden kurma kapısı) kazanç vermedi; 1792 px düzeltmesi bir hata düzeltmesiydi |
+
+En iyi sürüm: **best-v5** (`main`).
+
+---
+
+# Ek: Faz 1 raporu (değişmedi)
+
+## Faz 1 — RAPOR (raster → SVG)
 
 Tüm sayılar **ayrılmış test kümesinden** (130 görsel). Ölçüm donanımı: Intel Xeon @ 2.10 GHz, 4 vCPU, GPU yok.
 Yeniden üretmek için: `python -m data.build && make eval-all` → `eval/reports/report_tables.md`,

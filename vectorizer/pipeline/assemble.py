@@ -18,7 +18,7 @@ import time
 import numpy as np
 from scipy import ndimage as ndi
 
-from .boundary import assemble_regions, build_graph, label_regions
+from .boundary import Chain, assemble_regions, build_graph, label_regions
 from .color import hex_color
 from .fit import fit_chain, reverse_geom
 from .svgout import _join, fmt, geom_to_tokens, loop_d
@@ -74,10 +74,16 @@ def build_elements(lbl, palette_rgb, opts, timings=None, label_fill=None, ctx=No
         if (c.left >= 0 and drawn[c.left]) or (c.right >= 0 and drawn[c.right]):
             fit_chain(c, opts, ctx)
     timings["fit"] = time.perf_counter() - t
+    region_prims = {}
+    if opts.get("primitives", True) and opts.get("region_prims", True):
+        from .primfit import snap_region_primitives
+        t = time.perf_counter()
+        region_prims = snap_region_primitives(regions, chains, opts, drawn, shape=R.shape, ctx=ctx)
+        timings["region_prims"] = time.perf_counter() - t
     t = time.perf_counter()
     # region opacity from the input alpha (median over the region); < 0.98 -> fill-opacity
     opacity = np.ones(len(regions))
-    if alpha is not None and (alpha[lbl >= 0] < 250).any():
+    if alpha is not None and not opts.get("opaque", False) and (alpha[lbl >= 0] < 250).any():
         from scipy import ndimage as _ndi
         idx = np.arange(len(regions))
         a16 = alpha.astype(np.int16)
@@ -108,6 +114,32 @@ def build_elements(lbl, palette_rgb, opts, timings=None, label_fill=None, ctx=No
             drawn[rid] = False
     order = sorted([r for r in regions if r.label >= 0 and r.loops and r.rid not in converted],
                    key=lambda r: (depth[r.rid], -r.loop_area[r.outer], r.rid))
+    repair = bool(opts.get("geom_repair", False))
+    ring_fix = {}
+    if repair:
+        # every emitted ring must be simple (cutters): split lattice pinches, refit crossing / degenerate loops
+        from .validity import repair_loops, split_pinches
+        tv = time.perf_counter()
+        emit = []
+        for r in order:
+            for li in [r.outer] + ([] if r.fill_holes else [i for i in range(len(r.loops)) if i != r.outer]):
+                emit.extend(split_pinches(r.loops[li], chains))
+        refit = None
+        if opts.get("repair_refit", True):
+            from .primfit import _move_end
+            topts = dict(opts, fit_tol=0.5 * opts.get("fit_tol", 0.6), smooth_sigma=0.0, primitives=False)
+
+            def refit(c):
+                old = c.geom
+                tmp = Chain(c.pts, c.left, c.right, c.closed)
+                fit_chain(tmp, topts, ctx)
+                g = tmp.geom
+                if g is None or c.closed:
+                    return g
+                # keep the (possibly snapped / moved) shared junction positions
+                return _move_end(_move_end(g, True, old["start"]), False, old["segs"][-1][-1])
+        stats_v, ring_fix = repair_loops(emit, chains, prec=prec, refit=refit)
+        timings["validity"] = time.perf_counter() - tv
     rev_cache = {}
 
     def oriented(cid, rev):
@@ -141,13 +173,33 @@ def build_elements(lbl, palette_rgb, opts, timings=None, label_fill=None, ctx=No
             loops = [r.outer] + ([] if r.fill_holes else [i for i in range(len(r.loops)) if i != r.outer])
             outer = r.loops[r.outer]
             prim = chains[outer[0][0]].prim if len(outer) == 1 else None
-            if len(loops) == 1 and prim is not None and opts.get("primitives", True):
+            prim = region_prims.get(r.rid, prim)
+            if len(loops) == 1 and prim is not None and prim["type"] != "polygon" and opts.get("primitives", True):
                 singles.append(_prim_element(prim, fill_attr, prec))
                 n_prims += 1
             else:
                 toks = []
                 for li in loops:
-                    toks += loop_d([oriented(cid, rev) for cid, rev in r.loops[li]], prec)
+                    if li == r.outer and prim is not None and prim["type"] == "polygon":
+                        toks += _polygon_tokens(prim["points"], prec)   # without collinear junction vertices
+                        n_prims += 1
+                    elif repair:
+                        for sub in split_pinches(r.loops[li], chains):
+                            key = tuple(sub)
+                            if key in ring_fix:          # still self-crossing: emit its valid parts
+                                for ring in ring_fix[key]:
+                                    toks += _polygon_tokens([tuple(p) for p in ring], prec)
+                                continue
+                            gs = [oriented(cid, rev) for cid, rev in sub]
+                            # end the loop with a line / cubic if possible: arc end points are recomputed by
+                            # SVG consumers from the centre parameterisation (float noise at the closing point)
+                            for k in range(len(gs)):
+                                if gs[-1]["segs"] and gs[-1]["segs"][-1][0] != "A":
+                                    break
+                                gs = gs[1:] + gs[:1]
+                            toks += loop_d(gs, prec, exact_close=True)
+                    else:
+                        toks += loop_d([oriented(cid, rev) for cid, rev in r.loops[li]], prec)
                 fills.setdefault(fill_attr, [fill_attr, []])[1].extend(toks)
             if seam_w > 0 and not semi[r.rid] and not cutout:
                 for li in loops:
@@ -174,7 +226,14 @@ def build_elements(lbl, palette_rgb, opts, timings=None, label_fill=None, ctx=No
     elements.extend(stroke_els)
     timings["assemble"] = time.perf_counter() - t
     stats = {"n_regions": len(order), "n_chains": len(chains), "n_primitives": n_prims, "n_strokes": len(stroke_els)}
+    if repair:
+        stats.update({"geom_" + k: v for k, v in stats_v.items()})
     return elements, stats
+
+
+def _polygon_tokens(points, prec):
+    g = {"start": tuple(points[0]), "segs": [("L", tuple(p)) for p in list(points[1:]) + [points[0]]]}
+    return loop_d([g], prec, exact_close=True)
 
 
 def _prim_element(p, fill_attr, prec):

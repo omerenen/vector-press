@@ -40,3 +40,7 @@ serialised with `flock /tmp/claude-0/fulleval.lock`, timings invalid during this
 Fallback rule: if 3 parallel streams prove too slow/unstable, drop to 2 parallel or sequential and note it here.
 Step 3 (lead, sequential): merge A/B/C into `phase2/integration`, full evaluation (target first), ablation of each stream on top
 of the others, keep only winning combinations, speed measured once alone, independent review, merge to main, best-vN.
+Status (phase 2, done): integration merged to main as best-v5. Results and limitations: REPORT.md (Turkish), review:
+REVIEW_PHASE2.md. Parallel plan executed as written (3 streams, no fallback to 2/sequential needed). Open items for a next
+phase: per-image engine choice (render both / learned quality predictor), compiled boundary graph + fitter for the 1.2 s
+target, faster print preset on textured art, real user target set + vectorizer.ai comparison (data/target).
