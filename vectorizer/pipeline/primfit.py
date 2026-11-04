@@ -217,26 +217,41 @@ def polygon_dist(Q, V):
     return d
 
 
-def _poly_from_corners(S, cs, tol, trim=2):
-    """Polygon whose edges are TLS lines through the runs between corner indices cs. (V, err) or None."""
+def _run_line(S, a, b, tol, trim):
     n = len(S)
+    idx = np.arange(a, b if b > a else b + n) % n
+    P = S[idx]
+    if len(P) > 2 * trim + 2:
+        P = P[trim:len(P) - trim]
+    if len(P) < 2:
+        return None
+    c, d = _line_fit(P)
+    res = np.abs((P[:, 0] - c[0]) * d[1] - (P[:, 1] - c[1]) * d[0])
+    if robust_err(res) > tol:
+        return None
+    return c, d
+
+
+def _poly_from_corners(S, cs, tol, trim=2, cache=None):
+    """Polygon whose edges are TLS lines through the runs between corner indices cs. (V, err) or None.
+
+    cache: optional dict memoising the per-run line fits (keyed by run end points); the greedy vertex
+    removal in fit_polygon re-evaluates the same runs O(corners^2) times."""
     m = len(cs)
     if m < 3:
         return None
     lines = []
     for i in range(m):
-        a, b = cs[i], cs[(i + 1) % m]
-        idx = np.arange(a, b if b > a else b + n) % n
-        P = S[idx]
-        if len(P) > 2 * trim + 2:
-            P = P[trim:len(P) - trim]
-        if len(P) < 2:
+        key = (cs[i], cs[(i + 1) % m])
+        if cache is not None and key in cache:
+            ln = cache[key]
+        else:
+            ln = _run_line(S, key[0], key[1], tol, trim)
+            if cache is not None:
+                cache[key] = ln
+        if ln is None:
             return None
-        c, d = _line_fit(P)
-        res = np.abs((P[:, 0] - c[0]) * d[1] - (P[:, 1] - c[1]) * d[0])
-        if robust_err(res) > tol:
-            return None
-        lines.append((c, d))
+        lines.append(ln)
     V = []
     for i in range(m):
         (c0, d0), (c1, d1) = lines[i - 1], lines[i]
@@ -267,14 +282,21 @@ def fit_polygon(S, opts, max_vertices=16):
     tol = opts.get("prim_tol", 0.75)
     cs = list(cs)
 
+    dcache = {}
+
     def run_dir(a, b):
+        if (a, b) in dcache:
+            return dcache[a, b]
         idx = np.arange(a, b if b > a else b + n) % n
         P = S[idx]
         if len(P) >= 3:
-            return _line_fit(P)[1]
-        d = S[b % n] - S[a]
-        L = math.hypot(*d)
-        return d / L if L > 1e-9 else np.array([1.0, 0.0])
+            r = _line_fit(P)[1]
+        else:
+            d = S[b % n] - S[a]
+            L = math.hypot(*d)
+            r = d / L if L > 1e-9 else np.array([1.0, 0.0])
+        dcache[a, b] = r
+        return r
     # 1) merge nearly collinear neighbouring runs (staircase noise on diagonal edges)
     while len(cs) > 3:
         dirs = [run_dir(cs[i], cs[(i + 1) % len(cs)]) for i in range(len(cs))]
@@ -284,14 +306,15 @@ def fit_polygon(S, opts, max_vertices=16):
             break
         del cs[i]
     # 2) greedy vertex removal while the polygon still explains the samples
-    cur = _poly_from_corners(S, cs, tol)
+    cache = {}
+    cur = _poly_from_corners(S, cs, tol, cache=cache)
     if cur is None and len(cs) > 8:
         return None                      # not a polygon (cost guard: greedy search is O(corners^2))
     while len(cs) > 3:
         best = None
         for i in range(len(cs)):
             cand = cs[:i] + cs[i + 1:]
-            r = _poly_from_corners(S, cand, tol)
+            r = _poly_from_corners(S, cand, tol, cache=cache)
             if r is not None and (best is None or r[1] < best[1][1]):
                 best = (cand, r)
         if best is None:
