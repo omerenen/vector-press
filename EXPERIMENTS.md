@@ -788,3 +788,40 @@ rest of the time is spread over ~10 steps of 0.05–0.15 s with no single hotspo
 - print/cut `self_intersections`: a closed subpath whose last point repeats the first within 1e-6 is not counted (relative /
   arc commands end ~1e-13 px from the start → false GEOS hits).
 All held-out numbers below are computed with these definitions; phase2-base outputs are re-scored from their saved SVGs.
+
+### Print preset cost (tdev only; ttest timings were under 4-worker contention)
+Profile (tdev_0003 / 0040 / 0022, 1 thread): 41 / 27 / 7.6 s; the print preset forces the region engine with the MS
+region budget (`seg_budget` 0.004/px ≈ 4 200 regions at 1024²) on textured AI art → 2–4 k regions, 5–10 k chains:
+fit 8–16 s, region primitives 2–12 s (polygon greedy search + rounded-rect fits), quantize 2–6 s.
+- Exact speed-up (commit cd34538): memoised per-run line fits / run directions in `fit_polygon` (the greedy vertex removal
+  re-fitted the same runs O(corners²) times). SVG output byte-identical on all three images; region_prims −15…−30 %.
+- Region budget alternative (tdev_small, 18 items, 3 workers): 0.004 → composite 0.6548, median 38.1 s; 0.002 → 0.6286
+  (−0.026), median 28.2 s (−26 %). **Rejected**: the fidelity loss is larger than the time gain is worth for an offline
+  print export. Print stays slow on heavily textured art (documented limitation); it is fast on flat art (tdev_0022 7 s).
+
+### Final held-out evaluation (all methods scored with the same code; per-item rows in eval/runs/<exp>/<split>/)
+Target set **ttest** (67 CC0 DALL-E 3 images, never used for tuning):
+| method | composite | SSIM | PSNR | LPIPS ↓ | ΔE mean | edge-F | paths | gz KB |
+|---|---|---|---|---|---|---|---|---|
+| VTracer default | 0.6541 | 0.762 | 22.0 | 0.207 | 5.09 | 0.854 | 10 839 | 2 549 |
+| VTracer tuned (oracle category) | 0.6731 | 0.781 | 23.5 | 0.193 | 4.27 | 0.848 | 13 462 | 2 434 |
+| phase2-base | 0.6936 | 0.793 | 25.0 | 0.192 | 3.42 | 0.846 | 13 607 | 2 098 |
+| **final (auto)** | **0.7054** | **0.807** | **25.5** | **0.187** | **3.22** | 0.850 | 16 709 | 2 271 |
+| final `print` | 0.6251 | 0.745 | 24.8 | 0.251 | 4.06 | 0.700 | 2 538 | 587 |
+| final `cut` (≤ 8 colours, background dropped — fidelity not the goal) | 0.3280 | 0.471 | 11.1 | 0.552 | 20.8 | 0.425 | 36 | 81 |
+final vs phase2-base per item: 16 better (> +0.01), 4 worse (< −0.01: ttest_0055 −0.095, 0020 −0.068, 0030 −0.065,
+0029 −0.048; not investigated/tuned — held out), final beats tuned VTracer on 44/67 items; per category it loses only on
+poster (0.7035 vs 0.7184) where VTracer's tuned gradient parameters stay better.
+Print/cut readiness (ttest means; auto = 34/67 VTracer fallback):
+| metric | VTracer tuned | final auto | final print | final cut |
+|---|---|---|---|---|
+| open subpaths | 0 | 0 | 0 | 0 |
+| self-intersections / image | 71.8 | 55.7 | 0.19 | **0** |
+| overlap ratio (stacked area / canvas) | 3.15 | 3.66 | 0.10 | **0.00** |
+| distinct colours | 12 442 | 14 502 | 1 419 | **6.8** |
+| tiny islands (< 0.5 mm at 100 mm width) | 15 595 | 18 433 | 5 646 | **2.7** |
+| thin features (< 0.5 mm, opening test) | 6 270 | 8 437 | 773 | **37** |
+Dev **test** (130, phase-1 held-out): final 0.9143 vs phase2-base 0.9012, tuned VTracer 0.8170, default 0.7979;
+primitive recovery 0.775 (base 0.417), corner recall 0.745 (base 0.773), corner err 0.363 px (base 0.408).
+Overfitting check **proc2** (60 procedural scenes, new seed 777 and parameter ranges): final 0.8897 vs tuned VTracer 0.7957
+(+0.094; the phase-1 gap on the old procedural scenes was +0.10) → the gain transfers to unseen generator settings.
