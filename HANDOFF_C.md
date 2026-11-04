@@ -15,11 +15,13 @@ fit_profile="default", max_presets=["icon","logo","flat_illustration","line_art"
 | `graphic_override` | False | `True` | strong-edge graphic art (classifier flat ≥ 0.2, ink_edge ≥ 0.4) keeps the region engine; only noise bails |
 | `fit_profile` | "default" | `"tight"` | fit_tol 0.3 / line_tol 0.33 at 1× for graph-engine content presets (not cut, not 2× max) |
 | `max_presets` / `MAX_MODE_PRESETS` | icon, logo, flat_illustration, line_art, diagram | line_art, diagram | presets that mode="max" processes at 2× |
+| `route_max_c90` | — | 100 | photo_route "try" and graphic_override only when the classifier's c90 ≤ 100 (painterly many-colour AI art stays on VTracer) |
+| `fringe_max_colors` | — | 16 | fringe clean-up only for small palettes |
 | `photo_fallback` | (implicit: auto only) | None | force the region-explosion fallback on/off for explicit presets (evaluation tool) |
 Config with the recommended values: `eval/configs/C_final.yaml` (dev) / `C_tfinal.yaml` (tdev, LPIPS + print/cut).
 `eval/run.py`: per-item `st_preset`, `st_fallback`, `st_engine`, `st_n_regions`, `st_upscale` are now stored.
 
-## Numbers vs phase2-base (full runs; C_base / C_tbase = unchanged phase2-base, C_final / C_tfinal = new defaults)
+## Numbers vs phase2-base (full runs; C_base / C_tbase = unchanged phase2-base, C_final2 / C_tfinal2 = new defaults; dev identical to C_final)
 ### dev (130 items) — composite, Δ; tolerances: all categories pass (composite/SSIM up, ΔE down, edgeF ≥ −0.002, gap 0, valid 100 %)
 | cat | composite | SSIM | PSNR | ΔE | edgeF | edge_dev | corner rec. | prim. | nodes | gz bytes |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -34,8 +36,21 @@ Config with the recommended values: `eval/configs/C_final.yaml` (dev) / `C_tfina
 (logo / gradient bytes drop: dev_0029 and dev_0069 leave the photo engine.) Corner recall −0.012 (diagram −0.020) is the
 one geometric metric that moves the wrong way (tight fitting splits some corner arms) — not in the tolerance list,
 flagged for the lead.
-### tdev
-(see "tdev full run" below)
+### tdev (53 items, metrics vs input; LPIPS + print/cut)
+| cat | n | composite | SSIM | PSNR | LPIPS | ΔE | edgeF | paths | gz | pc nodes | pc tiny islands |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| ALL | 53 | 0.7023 → **0.7220 (+0.020)** | +0.024 | +0.72 | 0.185 → **0.170** | −0.26 | +0.018 | +18 % | +12 % | +23 % | +22 % |
+| logo | 17 | 0.734 → 0.754 (+0.020) | +0.026 | +0.80 | −0.015 | −0.25 | +0.021 | +30 % | +21 % | +44 % | +40 % |
+| vector_flat | 12 | 0.721 → 0.733 (+0.012) | +0.016 | +0.74 | −0.011 | −0.20 | +0.006 | −9 % | +1 % | +10 % | −3 % |
+| poster | 11 | 0.670 → 0.688 (+0.018) | +0.020 | +0.43 | −0.015 | −0.33 | +0.017 | +26 % | +14 % | +17 % | +26 % |
+| cutfile | 9 | 0.630 → 0.661 (+0.031) | +0.042 | +0.60 | −0.023 | −0.39 | +0.034 | +38 % | +22 % | +34 % | +49 % |
+| sticker | 3 | 0.763 → 0.791 (+0.029) | +0.014 | +1.77 | −0.013 | −0.03 | +0.005 | −24 % | −15 % | −16 % | −24 % |
+| tshirt | 1 | 0.760 → 0.760 (±0) | | | | | | | | | |
+No tdev item loses more than 0.005; 13 items gain +0.012…+0.136 (tdev_0012 +0.136, 0049 +0.118, 0039 +0.113, 0024 +0.101).
+Valid SVG rate 100 % on dev and tdev; gap_px 0 on dev.
+The print/cut cost is real: images that used to fall into the coarse "noise" VTracer branch (blotchy posterisation,
+LPIPS up to 0.52) now get the normal photo parameters, which means more nodes and tiny islands. For cut/print use the
+`cut` / `print` intents (unchanged; they never use VTracer).
 
 ## Decisions
 - **Classifier (item 5)**: measured cost of the classifier on dev = 0.0012 composite vs the per-image oracle over the four
@@ -56,6 +71,7 @@ flagged for the lead.
 ## Files touched
 Own scope: `vectorizer/api.py`, new `vectorizer/pipeline/fringe.py`, new `tests/test_fringe.py`,
 `tests/test_stream_c.py`. Outside scope: `eval/run.py` (stats fields only), `eval/configs/C_*.yaml` (new),
+HANDOFF_C.md,
 EXPERIMENTS.md / RESEARCH.md (own sections). `vectorizer/presets.py` and `classify.py` unchanged (nothing to gain).
 No new dependencies, no new licences.
 
@@ -70,6 +86,9 @@ No new dependencies, no new licences.
   offsets this.
 
 ## Open problems
+- Routing thresholds (flat ≥ 0.2, ink_edge ≥ 0.4, c90 ≤ 100, ≤ 16 colours for fringe) were chosen on tdev + dev
+  (disclosed); ttest is their real check. README still says mode="max" upscales flat presets (README not touched).
+- Corner recall on dev −0.012 (diagram −0.020) from tight fitting.
 - Engine choice is still the biggest tdev lever: per-image oracle region-vs-VTracer on tdev_small is +0.046 over base;
   the two-threshold rule recovers most of it but misses tdev_0000 (flat 0.187). A learned selector needs full-tdev
   region-engine runs (expensive: print/cut metrics on 1–5 MB SVGs take > 30 min per item).

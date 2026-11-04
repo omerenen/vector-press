@@ -443,3 +443,8 @@ All winners of the routing rules have c90 ≤ 74 (and the dev / test_0048-class 
 fringe's targets have ≤ 6 colours. Fix (thresholds now chosen on full tdev + dev — disclosed; ttest is the check):
 `route_max_c90=100` gates photo_route "try" and graphic_override, `fringe_max_colors=16` gates the fringe clean-up.
 Expected by construction: the 4 routing losers return to their phase2-base output (same engine and parameters).
+Result (C_tfinal2 = new defaults, full tdev): composite 0.7023 → **0.7220 (+0.020)**, SSIM +0.024, PSNR +0.72 dB,
+LPIPS 0.185 → **0.170**, ΔE −0.26, edgeF +0.018, GMSD −0.013; every category ≥ 0 (logo +0.020, sticker +0.029,
+cutfile +0.031, vector_flat +0.012, poster +0.018, tshirt ±0); **no item loses more than 0.005**; 13 items gain
++0.012…+0.136. Cost: paths +18 %, gz +12 %, print/cut nodes +23 %, tiny islands +22 % (items leaving the coarse
+noise branch / the bail-out now carry their real detail); self-intersections +26 per image (VTracer output).
