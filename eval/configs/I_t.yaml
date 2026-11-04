@@ -1,0 +1,5 @@
+name: I_t
+description: Integration (A+B+C) on the target set, LPIPS on (print/cut metrics computed separately).
+method: pipeline
+params: {preset: auto}
+lpips: true

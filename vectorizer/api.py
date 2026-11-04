@@ -198,6 +198,7 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
     auto = preset == "auto"
     tiny = H == 0 or W == 0 or min(H, W) < 4 or H * W <= 64
     intent = None
+    photo_tried = False
     feats = {}
     if preset in INTENTS:                    # "cut" / "print": content preset from the classifier + intent overrides
         intent, preset, auto = preset, "auto", True
@@ -210,6 +211,7 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
         if (preset == "photo" and options.get("photo_route", DEFAULTS["photo_route"]) == "try"
                 and feats.get("c90", 0) <= options.get("route_max_c90", DEFAULTS["route_max_c90"])):
             preset = "gradient"
+            photo_tried = True     # classifier said photo: region engine is only *tried* (stricter bail-out below)
     opts.update(preset_options(preset))
     if intent:
         if preset in ("photo",):             # photos: posterize through the region engine for cut/print intents
@@ -283,7 +285,12 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
                                                 seg_budget=None if fallback else opts["seg_budget"],
                                                 # graphic art (stream C) only bails out for real noise, also in the
                                                 # raw-fragment check of the MS path (stream B)
-                                                seg_raw_bail=opts["noise_density"] if graphic else opts["seg_raw_bail"],
+                                                # integration fix: a photo verdict that is only being tried keeps the
+                                                # phase-1 raw-fragment bail-out (max_region_density*4) instead of B's
+                                                # relaxed one (meant for grainy cartoons, not for photographs)
+                                                seg_raw_bail=(opts["noise_density"] if graphic else
+                                                              min(opts["seg_raw_bail"], opts["max_region_density"] * 4)
+                                                              if photo_tried else opts["seg_raw_bail"]),
                                                 seg_noise=opts["noise_density"])
         timings["quantize"] = time.perf_counter() - t
         if opts["fringe"] and not qinfo.get("bailed") and qinfo["n_colors"] <= opts["fringe_max_colors"]:
