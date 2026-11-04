@@ -838,3 +838,12 @@ Overfitting check **proc2** (60 procedural scenes, new seed 777 and parameter ra
 | M5 `print` below VTracer fidelity, slow, "full fidelity" claim | README corrected (clean layered output, lower fidelity than auto, 10–40 s on textured 1024 px); budget alternative measured above (rejected) |
 | M6 proc2 used during development by stream A (fix motivated by proc2_0012, commit 0b2bf17) | disclosed: proc2 is not a pristine held-out set; the overfitting check rests mainly on the generator-level shift (new seed + ranges) and on test |
 | minor: figure-8 loops, tiny images in cut, timing columns of re-scored phase2-base, sheets vs tuned VTracer | documented; tiny-image cut background fixed by the background rule |
+
+### VTracer-path working size (review M2; tuning data only)
+The photo engine (classifier "photo" and the region-explosion fallback) worked at ≤ 1024 px (phase-1 speed choice for
+3000² photos). DALL-E art is 1024² or 1792×1024, i.e. the 1792 px items were traced at 57 % resolution.
+tdev (53, 4 workers), `max_side`/`photo_max_side` 2048 vs 1024: composite 0.7257 → **0.7415 (+0.016)**, LPIPS 0.167 → 0.147,
+SSIM 0.821 → 0.841; 9 of the 18 large items change, each +0.080…+0.115, no item loses; gz bytes +39 %, time +12 %.
+dev: identical (no dev image > 1024 px). Cost on a pathological 3000² texture (tdev_0008 upscaled, 430 k regions):
+1024 → 38 s / 13 MB, 2048 → 163 s / 56 MB, **1792 → 121 s / 43 MB**. Adopted: photo preset `max_side=1792` (= DALL-E's
+native long side; larger inputs are still capped).
