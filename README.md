@@ -93,7 +93,7 @@ svg_text = res.svg
 | seçenek (UI için) | değer | etkisi |
 |---|---|---|
 | `preset` | `auto` (sınıflandırıcı) veya hazır ayar adı | içerik türüne göre ayarlar |
-| `mode` | `fast` (varsayılan) / `max` | `max`: düz grafikler 2× çözünürlükte işlenir (daha yüksek doğruluk, ~3-5× süre, ~%20-100 daha büyük dosya) |
+| `mode` | `fast` (varsayılan) / `max` | `fast` artık sıkı eğri toleransıyla çalışır (eski max kazancının çoğu); `max`: yalnız çizim/diyagram 2× çözünürlükte işlenir (1 px çizgiler için, ~3-4× süre, daha büyük dosya) |
 | `colors` | `"auto"` veya tamsayı | en fazla renk sayısı |
 | `detail` | 0 (kaba) … 1 (ince), varsayılan 0.5 | eğri toleransı, renk birleştirme yarıçapı, benek boyutu |
 | `corner_sharpness` | 0 (yuvarlak) … 1 (keskin), varsayılan 0.5 | köşe algılama eşiği |
@@ -106,6 +106,10 @@ svg_text = res.svg
 `n_primitives`, `n_gradients`, `bytes`. Gelişmiş/iç parametreler: `vectorizer/api.py` içindeki `DEFAULTS`.
 
 ## Nasıl çalışır (kısaca)
+
+Faz 2 yenilikleri: Mumford–Shah bölge birleştirme (dokulu yapay zekâ çizimlerinde temiz bölgeler), bölge düzeyinde
+primitif uydurma (daire/elips/dikdörtgen/yuvarlak dikdörtgen/çokgen/yıldız), geometri onarımı (kendini kesen yol yok),
+JPEG kenar saçağı temizliği, motor seçimi (bölge motoru ↔ VTracer) düzeltmeleri, `cut`/`print` ön ayarları.
 
 1. **Yükleme**: her tür PNG/JPEG/WebP/CMYK/16-bit/paletli/alfa → RGBA.
 2. **Sınıflandırma** (W7): 256 px küçük resim özelliklerinden karar kuralları → hazır ayar.

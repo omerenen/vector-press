@@ -1,0 +1,4 @@
+name: F_final
+description: Phase-2 integration, preset auto.
+method: pipeline
+params: {preset: auto}

@@ -1,0 +1,6 @@
+name: P2BASE_t_final
+description: phase2-base outputs (preset auto) re-scored with the phase-2 metrics.
+method: external
+params: {dir: /home/user/vector-press/eval/runs/t_final/ttest/svgs}
+lpips: true
+printcut: true

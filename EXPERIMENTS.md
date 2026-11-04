@@ -741,3 +741,50 @@ LPIPS 0.185 → **0.170**, ΔE −0.26, edgeF +0.018, GMSD −0.013; every categ
 cutfile +0.031, vector_flat +0.012, poster +0.018, tshirt ±0); **no item loses more than 0.005**; 13 items gain
 +0.012…+0.136. Cost: paths +18 %, gz +12 %, print/cut nodes +23 %, tiny islands +22 % (items leaving the coarse
 noise branch / the bail-out now carry their real detail); self-intersections +26 per image (VTracer output).
+
+## Phase 2 — integration (lead, branch `phase2/integration`)
+Merge A → B → C onto phase2-base (EXPERIMENTS/RESEARCH/PLAN merged with git's union driver; one real code conflict in
+`api.py`). Routing unified: B's MS path bails out on raw fragments (`seg_raw_bail` 0.06/px) and C's `graphic_override`
+keeps strong-edge graphics in the region engine — merged so that graphic art uses C's `noise_density` (0.35) for B's raw
+check as well, and a single "pure noise" density (`noise_density`, 0.35; C measured noise ≈ 0.6, AI art ≤ 0.22; B had 0.25)
+serves both engines. B's region budget applies whenever the fallback is off. 81 tests pass.
+
+### Ablation (each stream switched off on top of the others; full tdev 53 + full dev 130, 4 workers, machine otherwise idle)
+| variant | tdev composite | dev composite | dev prim | dev corner rec | tdev gz KB |
+|---|---|---|---|---|---|
+| phase2-base | 0.702 | 0.904 | 0.466 | 0.822 | 1 778 |
+| full A+B+C | 0.7239 | **0.9150** | **0.863** | 0.833 | 1 856 |
+| − A (region_prims, rect_refine, blur_sharp, geom_repair off) | 0.7238 | 0.9129 | 0.475 | 0.802 | 1 857 |
+| − B (segment=palette) | 0.7220 | 0.9145 | 0.852 | 0.843 | 1 995 |
+| − C (fringe off, photo_route features, graphic_override off, fit default; noise_density 0.25 = B's value) | 0.7241 | 0.9076* | 0.834 | 0.838 | 1 868 |
+\* dev −C was run with noise_density 0.1 (C's old value); on tdev that setting wrongly triggered B's coarse-noise branch
+(0.6996), the corrected tdev −C row uses 0.25. dev is insensitive to it (no dev image reaches the noise branch).
+Reading: on the target set B and C fix the same root cause (engine routing) — together they are not additive (each alone
++0.020/+0.022). C is what gives dev +0.007 (fringe clean-up, tight fitting, JPEG flat art), A is what gives the geometry
+(primitives 0.48 → 0.86, self-intersections → 0) and +0.002 dev. **All three kept.**
+
+### Integration fix: photo verdicts tried in the region engine
+Per-category check vs phase2-base found one tdev regression: the only t-shirt item (tdev_0052, a photo of a person wearing
+a printed shirt) −0.094. Interaction B×C: C's `photo_route="try"` sends a classifier "photo" to the region engine first;
+B relaxed the raw-fragment bail-out from 0.032 to 0.06/px (for grainy cartoons), this photo's raw count lies between the
+two and B's MS merge then keeps it compact → stays in the region engine. Fix (general): when the region engine is only
+*tried* for a photo verdict, the raw bail-out keeps the phase-1 value `min(seg_raw_bail, 4·max_region_density)`.
+Result: tdev 0.7239 → **0.7257** (t-shirt back to 0.760), **no dev image changed**.
+
+### Speed (quiet machine, `python -m eval.bench --split test --n 30`, 1024 px, Xeon @ 2.10 GHz)
+| version | median | p95 | max | quantize | fit |
+|---|---|---|---|---|---|
+| phase2-base | 2.10 s | 2.90 s | 3.00 s | 1.18 s | 0.60 s |
+| integration | 1.48 s | 2.51 s | 3.48 s | 0.75 s | 0.44 s |
+| + Schneider reparameterisation 3 iterations with stall test (fit −25 % on dev_small, SSIM +0.0001, nodes +0.5 %) | **1.45 s** | **2.30 s** | 2.69 s | 0.78 s | 0.45 s |
+Target ≤ 1.2 s median **not reached**: B cut the quantize core by ~48 %, but the new quality stages (MS merge ~12 %,
+fringe, region primitives ~1.4× fit work on line art/diagrams, tight fitting more splits) spend part of it again; the
+rest of the time is spread over ~10 steps of 0.05–0.15 s with no single hotspot. Next steps would be a compiled
+(numba/Rust) crack-graph + fitter or a fully vectorised multi-segment Bézier fit.
+
+### Metric changes (stream A's proposals, applied identically to all methods)
+- `corner_err` = distance from the output's Harris peak to the GT render's own Harris peak in the same disc (the nominal
+  vertex is not where any detector peaks; GT vs itself gave 0.44–1.15 px). The old value is kept as `corner_err_nominal`.
+- print/cut `self_intersections`: a closed subpath whose last point repeats the first within 1e-6 is not counted (relative /
+  arc commands end ~1e-13 px from the start → false GEOS hits).
+All held-out numbers below are computed with these definitions; phase2-base outputs are re-scored from their saved SVGs.
