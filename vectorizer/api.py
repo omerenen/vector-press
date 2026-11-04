@@ -47,6 +47,19 @@ DEFAULTS = dict(
     upscale_scaled=("corner_scale", "seam_width"),  # px-unit options rescaled when upscaling
     upscale_max_side=3072,   # max mode never processes more than this many px on the long side
     max_region_density=0.008,  # preset="auto": >8 regions per 1000 px (dev: flat art <= 5.7, photos 18-26) -> photo engine
+    photo_route="try",       # preset="auto": "features" = classifier "photo" goes straight to the photo engine;
+                             # "try" = it goes to the gradient preset and reaches the photo engine only through the
+                             # region-explosion fallback (JPEG'd flat art is often classified as photo)
+    noise_density=0.35,      # fallback: more regions than this per px (counted before clean-up) = pure noise -> coarse VTracer
+    fit_profile="tight",     # "tight": halved fit tolerances at 1x (TIGHT_FIT) for the graph-engine content presets
+                             # (= the measured cause of the old max-mode gain, without 4x pixels); not for cut / 2x max
+    max_presets=None,        # presets that mode="max" processes at 2x (None = MAX_MODE_PRESETS)
+    graphic_override=True,   # preset="auto": strong-edge graphic art (classifier flat >= 0.2 and ink_edge >= 0.4) keeps
+                             # the region engine however many regions it has (only pure noise, noise_density, bails)
+    route_max_c90=100,       # photo_route "try" and graphic_override only for moderate palettes (classifier c90 <= this);
+                             # many-colour painterly AI images (c90 104-672 on tdev) are better served by VTracer
+    fringe_max_colors=16,    # fringe clean-up only for small palettes (degraded flat art); textured art loses detail
+    photo_fallback=None,     # region-explosion fallback to the photo engine: None = only with preset "auto", True/False force
     low_alpha=24,
     cutout=False,            # cut-file geometry: real holes, no stacking overlaps, no seams, one path per colour
     drop_background=False,   # cut: remove the background colour (it is not cut / weeded)
@@ -76,13 +89,20 @@ DEFAULTS = dict(
     seg_budget=0.004,        # ms without engine fallback (print/cut/explicit presets): max regions per px (raises lambda)
     seg_raw_bail=0.06,       # ms + preset auto: > this many raw palette fragments per px -> photo engine (photographic texture)
     seg_snap=0.0,            # ms: snap region colours closer than this (OKLab) to one paint (0 = off)
+    fringe="auto",           # edge-fringe clean-up after quantisation: None/"halo"/"colour"/"both"/"auto" (pipeline/fringe.py;
+                             # "auto" = "halo" for the presets in FRINGE_PRESETS, off for line art: it erases thin lines)
+    fringe_near=0.09,        # OKLab distance under which a thin edge band counts as an overshoot of its neighbour
 )
 
 
 # mode="max": process at 2x (only px-scale of the corner detector is adapted, so the fits are effectively
 # twice as tight); measured gains on icon/logo/line_art/diagram, losses on gradients -> not applied there.
 MAX_MODE = dict(upscale=2)
-MAX_MODE_PRESETS = {"icon", "logo", "flat_illustration", "line_art", "diagram"}
+# phase 2 (stream C): icon/logo/flat gain nothing from 2x once fast mode fits tightly (fit_profile="tight"); only
+# diagrams keep a resolution gain (1-px outlines) -> 2x for the line presets only.
+MAX_MODE_PRESETS = {"line_art", "diagram"}
+FRINGE_PRESETS = {"icon", "logo", "flat_illustration"}
+TIGHT_FIT = dict(fit_tol=0.3, line_tol=0.33)
 _PX_DEFAULTS = dict(corner_scale=3.0, seam_width=1.0)
 
 
@@ -158,7 +178,7 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
     preset: "auto" (classifier) or one of vectorizer.presets.PRESETS. The classifier reports
             image_type in {icon, logo, line_art, gradient, photo}; diagrams are reported as line_art
             and flat illustrations as logo/icon (they share presets).
-    mode:   "fast" (default) or "max" (flat presets processed at up to 2x, slower, see README).
+    mode:   "fast" (default) or "max" (line_art / diagram presets processed at up to 2x, slower, see README).
     options (user-facing): colors (int|"auto"), detail (0..1), corner_sharpness (0..1),
              primitives (bool), gradients (bool), centerline (bool); any internal key of DEFAULTS.
     Returns Result(svg, stats); stats always contains width, height, mode, preset, image_type,
@@ -178,6 +198,7 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
     auto = preset == "auto"
     tiny = H == 0 or W == 0 or min(H, W) < 4 or H * W <= 64
     intent = None
+    feats = {}
     if preset in INTENTS:                    # "cut" / "print": content preset from the classifier + intent overrides
         intent, preset, auto = preset, "auto", True
     if auto:
@@ -186,6 +207,9 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
         timings["classify"] = time.perf_counter() - t
         stats["image_type"] = itype
         preset = TYPE_TO_PRESET[itype]
+        if (preset == "photo" and options.get("photo_route", DEFAULTS["photo_route"]) == "try"
+                and feats.get("c90", 0) <= options.get("route_max_c90", DEFAULTS["route_max_c90"])):
+            preset = "gradient"
     opts.update(preset_options(preset))
     if intent:
         if preset in ("photo",):             # photos: posterize through the region engine for cut/print intents
@@ -194,12 +218,26 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
         stats["intent"] = intent
         auto = False                         # cut/print never fall back to the VTracer photo engine (clean vectors)
     stats["preset"] = preset if not intent else f"{intent}:{preset}"
-    if mode == "max" and preset in MAX_MODE_PRESETS:
+    max_presets = options.get("max_presets") or DEFAULTS["max_presets"] or MAX_MODE_PRESETS
+    upscaled = mode == "max" and preset in max_presets
+    if upscaled:
         opts.update(MAX_MODE)
+    if (options.get("fit_profile", DEFAULTS["fit_profile"]) == "tight" and opts["engine"] == "graph"
+            and not upscaled and intent != "cut"):
+        opts.update(TIGHT_FIT)
     opts.update({k: v for k, v in _map_user_options(options).items() if v is not None})
     unknown = set(opts) - set(DEFAULTS)
     if unknown:
         raise TypeError(f"unknown option(s): {sorted(unknown)}")
+    fallback = auto if opts["photo_fallback"] is None else bool(opts["photo_fallback"])
+    graphic = bool(fallback and opts["graphic_override"] and feats and not feats.get("empty")
+                   and feats["flat"] >= 0.2 and feats["ink_edge"] >= 0.4 and feats["c90"] <= opts["route_max_c90"])
+    if graphic:
+        stats["graphic"] = True
+    if opts["fringe"] in (False, "none", "off"):
+        opts["fringe"] = None
+    if opts["fringe"] == "auto":
+        opts["fringe"] = "halo" if preset in FRINGE_PRESETS else None
 
     def finish(svg):
         timings["total"] = time.perf_counter() - t_all
@@ -235,15 +273,33 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
                                                 thin_lines=opts["thin_lines"], mix_suppress=opts["mix_suppress"],
                                                 slivers=opts["slivers"], merge_frac=opts["merge_frac"],
                                                 denoise=opts["denoise"], low_alpha=opts["low_alpha"],
-                                                bail_density=opts["max_region_density"] * 4 if auto else None,
+                                                bail_density=(None if not fallback else opts["noise_density"] if graphic
+                                                              else opts["max_region_density"] * 4),
                                                 segment=opts["segment"], seg_lambda=opts["seg_lambda"],
                                                 seg_snap=opts["seg_snap"],
                                                 seg_paints=opts["max_colors"] if opts["cutout"] else None,
                                                 seg_init=opts["seg_init"], seg_model=opts["seg_model"],
                                                 seg_pal_snap=opts["seg_pal_snap"], seg_premerge=opts["seg_premerge"],
-                                                seg_budget=None if auto else opts["seg_budget"],
-                                                seg_raw_bail=opts["seg_raw_bail"])
+                                                seg_budget=None if fallback else opts["seg_budget"],
+                                                # graphic art (stream C) only bails out for real noise, also in the
+                                                # raw-fragment check of the MS path (stream B)
+                                                seg_raw_bail=opts["noise_density"] if graphic else opts["seg_raw_bail"],
+                                                seg_noise=opts["noise_density"])
         timings["quantize"] = time.perf_counter() - t
+        if opts["fringe"] and not qinfo.get("bailed") and qinfo["n_colors"] <= opts["fringe_max_colors"]:
+            from .pipeline.fringe import clean_fringe
+            from .pipeline.boundary import label_regions
+            t = time.perf_counter()
+            lbl, nfr = clean_fringe(lbl, lab, pal_lab, method=opts["fringe"], near=opts["fringe_near"],
+                                    min_area=max(2, int(qinfo.get("min_area") or 3)))
+            if nfr:
+                used = np.unique(lbl[lbl >= 0])
+                remap = np.full(len(pal_lab), -1, np.int32)
+                remap[used] = np.arange(len(used))
+                lbl = np.where(lbl >= 0, remap[np.maximum(lbl, 0)], lbl).astype(np.int32)
+                pal_lab, pal_rgb = pal_lab[used], pal_rgb[used]
+                qinfo = dict(qinfo, n_colors=len(used), n_regions=int(len(label_regions(lbl)[1])), fringe_px=nfr)
+            timings["fringe"] = time.perf_counter() - t
         stats.update(qinfo)
         if opts["cutout"]:
             from .pipeline import cut as _cut
@@ -259,7 +315,8 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
                 if bgl >= 0 and (lbl == bgl).mean() < 0.95:
                     lbl = np.where(lbl == bgl, -1, lbl)
             timings["cut"] = time.perf_counter() - t
-        if auto and qinfo["n_regions"] > 300 and qinfo["n_regions"] > H * W * opts["max_region_density"]:
+        if (fallback and qinfo["n_regions"] > 300 and qinfo["n_regions"] > H * W * opts["max_region_density"]
+                and (not graphic or qinfo.get("bailed"))):
             # region explosion (texture / noise / star fields misclassified as flat art): photo engine
             stats["fallback"] = f"photo ({qinfo['n_regions']} regions)"
             preset = "photo"
@@ -267,7 +324,7 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
             popts = preset_options("photo")
             opts["engine"] = "vtracer_raw"
             opts["vtracer_params"] = dict(popts["vtracer_params"])
-            if qinfo.get("pure_noise", qinfo["n_regions"] > 0.1 * H * W):   # pure noise: bound the output size
+            if qinfo.get("pure_noise", qinfo["n_regions"] > opts["noise_density"] * H * W):   # pure noise: bound size
                 opts["vtracer_params"].update(filter_speckle=8, color_precision=6, layer_difference=24)
             if max(H, W) > popts["max_side"]:
                 sc = popts["max_side"] / max(H, W)

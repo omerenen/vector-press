@@ -1,0 +1,6 @@
+name: C_tfinal2
+description: Stream C defaults v2 on tdev.
+method: pipeline
+params: {preset: auto}
+lpips: true
+printcut: true

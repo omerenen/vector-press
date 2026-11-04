@@ -576,3 +576,168 @@ Honest limitation: 35/53 tdev outputs are still VTracer-like (photo engine) beca
 prefers the 30 k-path stack; the clean region output for those images exists (print/cut intents, `seg_budget`) but
 scores lower (tdev_small print: 0.654 vs 0.671 for the old run with fallbacks; 368 KB vs 1.2 MB, 1 176 vs 7 485 paints,
 3 272 vs 8 262 tiny islands, overlap 0.10 vs 3.05).
+## Phase 2 — stream C (classifier / presets / fallback / regressions / fast-vs-max)
+
+### C-0 Setup
+`eval/run.py` now also stores `st_preset`, `st_fallback`, `st_engine`, `st_n_regions`, `st_upscale` per item (needed for the
+fallback / classifier analysis; no metric changed). New option `photo_fallback` (None = old behaviour: region-explosion
+fallback only with preset "auto"; True/False force it) so that explicit presets can be evaluated with and without the
+VTracer fallback.
+
+### C-8 Diagnosis of the two phase-1 held-out regressions (disclosure: the diagnosis STARTED from test items
+test_0013 and test_0048 — allowed only for diagnosis; the failure classes were then searched on dev, fixes validated on dev)
+- **test_0013** (icon, colour-shift + JPEG q86; ours 0.851 vs tuned VTracer 0.882, 16 paths but 1 560 nodes, ragged
+  outlines). Root cause, measured on the label map: the palette has 4 colours for a 2-colour icon — a pink *halo* band
+  (L .957) on the light side and a darker *rim* band (L .52) on the dark side of every edge (JPEG ringing / chroma
+  subsampling overshoot). They are 1-px bands fragmented into 154 small components. The AA sliver removal does not
+  remove them because (a) they are not mixtures of the two sides (they overshoot: rim is 0.06 OKLab off the
+  purple–cream segment, > radius 0.045) and (b) halo and rim are adjacent, so each band's main neighbour is the other
+  band. Every shape then gets a jagged boundary through dozens of fragments.
+  Same class on dev (thin components whose colour is < 0.09 OKLab from an adjacent label, counted after quantisation):
+  dev_0028 (logo, jpeg; 90 such components, 4 colours for a 2-colour logo, 107 regions), dev_0005 (icon, noise; 52),
+  dev_0029 (logo, noise; 192), plus JPEG line art / diagrams (dev_0092, 0097, 0118, 0089, 0108 ...).
+- **test_0048** (flat_illustration emoji, JPEG q74; ours 0.805 = VTracer photo preset vs tuned VTracer 0.806). Root
+  cause: classifier → "photo" (c90 = 24 colours > 13.5 because of JPEG noise, flat share 0.51 < 0.53) → the image never
+  reaches the region engine. With preset logo/gradient the region engine scores 0.895 / 0.905 (9 KB instead of 134 KB).
+  Failure class: compressed/noisy flat art classified as photo from colour-count features. On dev: dev logo→photo (1),
+  gradient→photo (1). Fix belongs to the classifier work (C-5).
+
+### C-8b Fringe clean-up (new module `vectorizer/pipeline/fringe.py`, option `fringe`)
+Three approaches considered (RESEARCH.md stream C): (1) component-level *halo* model, (2) palette-level *edge-only
+colour* model, (3) pre-quantisation edge restoration (shock filter) — rejected without prototype because it destroys
+the AA coverage the sub-pixel boundary placement (exp_011) relies on; widening the sliver mixture test (quantize.py,
+stream B) cannot catch the double fringe (each band's main neighbour is the other band, measured above).
+First halo version marked both members of a pair of near-coloured thin components → erased thin dark connector
+lines in diagrams (dev_0114 −0.054). Fixed by requiring the near partner to be a non-thin component.
+Targeted dev items (14 items with the most near-colour thin components), composite base → halo / colour:
+| item | cat (deg) | preset | base | halo | colour |
+|---|---|---|---|---|---|
+| dev_0028 | logo (jpeg) | icon | 0.900 | **0.961** | 0.963 |
+| dev_0005 | icon (noise) | icon | 0.935 | **0.974** | 0.974 |
+| dev_0075 | gradient (colorshift) | icon | 0.835 | **0.853** | 0.853 |
+| dev_0023 | logo (rescale) | logo | 0.779 | **0.787** | 0.779 |
+| dev_0097 | line_art (jpeg) | line_art | 0.761 | 0.722 | 0.598 |
+| dev_0092 | line_art (jpeg) | line_art | 0.876 | 0.845 | 0.788 |
+| dev_0089 | line_art (colorshift) | line_art | 0.778 | 0.766 | 0.540 |
+| dev_0118 | diagram (jpeg) | line_art | 0.859 | 0.832 | 0.783 |
+| dev_0065 | gradient (jpeg) | gradient | 0.856 | 0.848 | — |
+On line art the thin bands ARE the content (JPEG splits a stroke into a dark core and a lighter edge colour), so the
+clean-up is only applied to the flat presets: `fringe="auto"` = halo for icon/logo/flat_illustration, off for line_art /
+diagram / gradient / photo. Halo is kept over colour (equal on flat items, more local, much less destructive when misapplied).
+(test_0013 diagnosis item: 156 → 7 regions, 18.3 KB → 1.7 KB SVG.)
+
+### C-9 Fast vs max (dev_small, categories with max mode; composite Δ vs fast base, gz bytes Δ)
+| variant | icon | logo | flat_ill | line_art | diagram | bytes | prim_recovery |
+|---|---|---|---|---|---|---|---|
+| max (2× bicubic, corner arm ×2) | +0.006 | +0.003 | +0.001 | +0.007 | **+0.023** | +93…+193 % | −0.21…−0.25 |
+| tight fit at 1× (fit_tol 0.3, line_tol 0.33) | +0.006 | **+0.004** | +0.000 | **+0.010** | +0.008 | +24…+63 % | ±0 |
+| tight + smooth_sigma 0.5 | +0.003 | +0.002 | −0.003 | +0.008 | +0.007 | +39…+95 % | ±0 |
+| fit_tol 0.45, line_tol 0.5 | +0.003 | +0.002 | +0.000 | +0.005 | +0.005 | +9…+28 % | ±0 |
+Root cause of the max-mode gain (confirms phase 1 abl_015_up2s): for icon/logo/line_art it is the effectively halved
+fit tolerance, which 1× tight fitting reproduces without 4× pixels, without the primitive loss and with ~⅓ of the
+byte increase. Only diagrams gain from resolution itself (max − tight = +0.015): 1-px box outlines between a fill and the
+background are lost at 1× and kept at 2× (dev_0117 +0.054, look: sheet). Max mode also has large losses on
+colour-shifted / JPEG line art (dev_0084 −0.066, 10× bytes: staircased diagonals at 2×).
+
+### C-5a Region-density fallback on tdev — the "pure noise" branch is the main loss (tdev_small, 18 items)
+Diagnosis: the fallback has two outputs — VTracer with the tuned photo parameters, or, when `n_regions > 0.1·H·W`,
+coarse "pure noise" parameters (filter_speckle 8, colour precision 6, layer difference 24) to bound the file size. With
+the early bail-out the region count is taken *before* speckle merging, so halftone / screen-print / stencil AI art
+(16–29 % of pixels start a new region) is treated as random noise: 6 of 18 tdev_small items, blotchy posterised
+output (look: tdev_0024 sheet). Measured on dev / synthetic: real uniform noise has 0.62–0.65 regions/px
+(256² and 1024²), dev photos ≤ 0.12, tdev art ≤ 0.22.
+Per item (base = noise branch → tuned photo params): tdev_0000 0.481→0.559, tdev_0024 0.517→0.618, tdev_0039
+0.543→0.639, tdev_0045 0.567→0.660, tdev_0048 0.590→0.673 (LPIPS 0.52→0.50, 0.49→0.39, 0.21→0.17, 0.33→0.28,
+0.20→0.13; SSIM +0.06…+0.16; edgeF +0.07…+0.16); cost: 2–2.5× bytes (already in the zero-compactness range >1 MB)
+and 2–3× nodes. Fix: new key `noise_density` (old 0.1) → 0.35 (between art ≤0.22 and noise ≥0.6).
+Same bug on dev only through the classifier change below (dev_0120 photo, 0.117 regions/px when routed through the
+region engine).
+
+### C-5b Classifier "photo" → region engine first (`photo_route="try"`)
+test_0048-class (JPEG'd flat art → photo). Instead of trusting colour-count features, a "photo" verdict goes to the
+gradient preset and reaches VTracer only through the measured region explosion (cost = quantisation until the bail-out).
+Dev items classified photo (12): dev_0029 (logo, noise) 0.758→**0.861** (143→16 KB), dev_0069 (gradient)
+0.765→**0.866** (97→14 KB); all 10 real photos still end in the photo engine (2 729–18 124 regions) with identical
+output once `noise_density` is fixed (dev_0120 −0.136 with the old 0.1 noise branch).
+
+### C-9b Candidate fast/max split (dev_small; cand0 = fringe auto + photo_route try + noise_density 0.35)
+cand1 = cand0 + `fit_profile="tight"` (fit_tol 0.3 / line_tol 0.33 at 1× for all graph content presets, not for cut):
+ALL +0.005 vs cand0 (icon +0.006, logo +0.004, flat ±0, line_art +0.010, diagram +0.008, gradient +0.003; PSNR +1.3 dB,
+ΔE −0.05, edge_dev −0.020, corner recall +0.006, primitives ±0; bytes +3 % overall, +24…+63 % on flat art).
+cand2 = cand1 + mode="max" with 2× only for line_art/diagram (`max_presets`): vs cand1 line_art −0.003, diagram
+**+0.015** (thin box outlines), bytes +61…+118 %, primitive recovery −0.21 (rects no longer detected at 2×).
+Old max mode vs old fast (C_s_max): icon +0.006 / logo +0.003 / flat +0.001 / line_art +0.007 / diagram +0.023 at
++93…+193 % bytes → for icon/logo/flat the tight 1× profile gives the same or more for ~⅓ of the bytes and no
+primitive loss.
+
+### C-5c Cost of the classifier (dev_small, 44 items; all variants with fringe auto + noise_density 0.35 + fallback on)
+Per-image oracle over the four preset families (FLAT = icon/logo/flat_illustration, LINES = line_art/diagram, GRADIENT,
+PHOTO) vs auto (cand0):
+| cat | auto | FLAT | LINES | GRADIENT | PHOTO | per-image oracle |
+|---|---|---|---|---|---|---|
+| icon | 0.9553 | 0.9553 | 0.9553 | 0.9341 | 0.8204 | 0.9553 |
+| logo | 0.9351 | 0.9351 | 0.9304 | 0.9351 | 0.8393 | 0.9362 |
+| flat_illustration | 0.9618 | 0.9618 | 0.9551 | 0.9618 | 0.8561 | 0.9619 |
+| gradient | 0.8895 | 0.8833 | 0.8626 | 0.8869 | 0.8037 | 0.8920 |
+| line_art | 0.9126 | 0.9134 | 0.9126 | 0.8947 | 0.8193 | 0.9152 |
+| diagram | 0.8875 | 0.8786 | 0.8875 | 0.8783 | 0.7881 | 0.8890 |
+| photo | 0.7609 | (all four fall back) | | | | 0.7609 |
+| ALL | **0.9088** | 0.9067 | 0.9029 | 0.9009 | 0.8156 | 0.9100 |
+True-category oracle (icon/logo/flat→FLAT, line_art/diagram→LINES, gradient→GRADIENT) = the FLAT/LINES/GRADIENT
+columns of the matching rows: equal to auto within ±0.003 (auto is better on gradient). The remaining classifier
+cost on dev is **0.0012** composite (per-image oracle), so "flat_illustration never detected" and "diagram → line_art"
+cost nothing — they share presets. Decision: no learned family classifier (nothing to gain); keep the family
+presets, the type labels are cosmetic. The cross-family error that does matter is "photo" on compressed flat art
+(C-5b) — fixed by routing, not by a better classifier.
+
+### C-5d Engine choice on tdev (region engine vs VTracer) — the real classification problem on the target set
+tdev_small, region engine forced (FLAT preset, no fallback) vs VTracer photo preset, Δcomposite (region − VTracer):
+region wins on strong-edge graphic art: tdev_0012 +0.130, tdev_0051 +0.082, tdev_0039 +0.060, tdev_0000 +0.046,
+tdev_0021 +0.025, tdev_0006/0033/0042 (already region); VTracer wins on painterly / smooth-shaded images: tdev_0003
+−0.125, 0036 −0.122, 0009 −0.125, 0018 −0.129, 0030 −0.083, 0015 −0.080, 0048 −0.068, 0045 −0.044, 0024 −0.038,
+0027 −0.026. Post-clean region density does not separate them (tdev_0030: 2 718 regions, VTracer much better;
+tdev_0039: 48 802 regions, region better); the early bail-out on the *pre*-clean count also sends items with only
+928 (tdev_0051) / 12 345 (tdev_0012, density 0.0067 < 0.008) final regions to VTracer.
+The classifier features separate them: VTracer-better items all have flat < 0.2 (c90 ≥ 67); region-better items have
+flat ≥ 0.2 and ink_edge ≥ 0.4 (exception: tdev_0000, flat 0.187). Dev: all flat art has flat ≥ 0.27 except dev_0102
+(diagram, noise, flat 0.127) — region better there, but it never explodes; dev photos have ink_edge ≤ 0.23.
+New flag `graphic_override` (fitted on tdev_small + dev_small, 2 rounded thresholds; disclosed): when flat ≥ 0.2 and
+ink_edge ≥ 0.4 the density fallback is disabled and only pure noise (`noise_density`) bails.
+
+### C-10 Combined candidate on tdev_small (18 items, LPIPS + print/cut)
+cand3 = fringe auto + photo_route try + noise_density 0.35 + graphic_override; vs phase2-base (C_ts_base):
+composite 0.689 → **0.725 (+0.035)**, SSIM +0.042, PSNR +0.8 dB, LPIPS 0.182 → **0.157**, ΔE −0.41, edgeF +0.036; every
+category improves (logo +0.050, sticker +0.040, vector_flat +0.032, poster +0.028, cutfile +0.019). Per item: noise
+branch removed on tdev_0000/0024/0045/0048 (+0.077…+0.101), region engine kept on tdev_0012 (+0.101, 1.3 MB → 0.5 MB),
+0039 (+0.107), 0051 (+0.080, 1.06 MB → 46 KB); only loss tdev_0033 −0.004 (fringe). Cost: paths +24 %, gz +14 %,
+nodes / tiny islands up on the items that leave the coarse noise branch (they had been blotchy posterisations).
+cand4 = cand3 + `fit_profile="tight"`: +0.001 more (region-engine items +0.003…+0.006), gz +2 %.
+Per-image oracle over {base, VTracer photo params, region FLAT, region GRADIENT} on tdev_small = 0.735 → cand4 (0.726)
+recovers 80 % of the oracle gap.
+
+### C-9c Old max mode on tdev_small (phase2-base settings + mode=max): +0.032 — but not from resolution
+Per item the gain sits exactly on the items the routing fixes address: the region counts are taken in *processed*
+pixels, so at 2× the density falls below the thresholds — tdev_0000/0024/0039/0045 leave the coarse noise branch
+(+0.07…+0.10, same as `noise_density`), tdev_0012/0051/0048 stay in the region engine (+0.14/+0.11/+0.05, same as
+`graphic_override`), and tdev_0003 is wrongly kept in the region engine (−0.101). Region-engine items proper:
+tdev_0021 +0.026, tdev_0033 −0.002. With the routing fixed (cand3/cand4 +0.035/+0.036 in fast mode) there is no
+tdev argument for 2× on flat presets; decision unchanged (2× only for line_art/diagram).
+
+### C-11 Full tdev with cand4 defaults (C_tfinal): +0.012 only (tdev_small: +0.036) → losses on unseen items, diagnosed
+C_tbase 0.7023 → C_tfinal 0.7140 (SSIM +0.015, LPIPS −0.006, ΔE −0.14, edgeF +0.008; logo +0.020, cutfile +0.027,
+poster +0.011, sticker +0.004, vector_flat **−0.009**). Gains as on tdev_small (tdev_0049 +0.118, 0039 +0.113, 0012
++0.105, 0024 +0.101, 0020 +0.093, 0045 +0.093, 0051 +0.086, 0048 +0.083, 0017 +0.081, 0000 +0.077). Losses, by cause:
+- `photo_route="try"` on many-colour painterly images whose region count stays low (no fallback): tdev_0005 −0.077
+  (c90 272, LPIPS 0.10→0.20), tdev_0050 −0.073 (c90 189).
+- `graphic_override` on many-colour items: tdev_0040 −0.098 (c90 146, LPIPS 0.05→0.17), tdev_0028 −0.067 (c90 672);
+  small: tdev_0013 −0.012 (c90 10).
+- `fringe` on textured art: tdev_0010 −0.041 (47 colours, 56 608 px re-assigned).
+All winners of the routing rules have c90 ≤ 74 (and the dev / test_0048-class items c90 ≤ 61); all losers c90 ≥ 146;
+fringe's targets have ≤ 6 colours. Fix (thresholds now chosen on full tdev + dev — disclosed; ttest is the check):
+`route_max_c90=100` gates photo_route "try" and graphic_override, `fringe_max_colors=16` gates the fringe clean-up.
+Expected by construction: the 4 routing losers return to their phase2-base output (same engine and parameters).
+Result (C_tfinal2 = new defaults, full tdev): composite 0.7023 → **0.7220 (+0.020)**, SSIM +0.024, PSNR +0.72 dB,
+LPIPS 0.185 → **0.170**, ΔE −0.26, edgeF +0.018, GMSD −0.013; every category ≥ 0 (logo +0.020, sticker +0.029,
+cutfile +0.031, vector_flat +0.012, poster +0.018, tshirt ±0); **no item loses more than 0.005**; 13 items gain
++0.012…+0.136. Cost: paths +18 %, gz +12 %, print/cut nodes +23 %, tiny islands +22 % (items leaving the coarse
+noise branch / the bail-out now carry their real detail); self-intersections +26 per image (VTracer output).

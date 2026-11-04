@@ -154,3 +154,39 @@ stage (screened on the raster level = mean-colour render vs input at equal bound
   needs a VTracer run + render per image (2–4 s) → not done.
 - Winner: MS (const) + phase-1 pre-clean-up + palette snapping as the default segmentation (tdev 0.702 → 0.724, dev
   0.9044 → 0.9050, full runs); piecewise-affine and Felzenszwalb initialisation stay options (mixed results, B-5).
+## Phase 2 — stream C
+### Edge fringes on degraded flat art (work item 8)
+- **Component halo model** (own): thin component (2·area/perimeter < 1.6 px, < 1 % of the image) whose colour is within
+  0.09 OKLab of an adjacent *non-thin* component is an overshoot band of that surface; its pixels are re-assigned per
+  pixel to the most similar label within 3 px, then specks are merged. Decision: **kept** for the flat presets
+  (`fringe="auto"`), see EXPERIMENTS C-8b.
+- **Palette edge-only colour model** (own): drop a palette colour whose pixels never survive a 3×3 erosion and that is
+  within 0.09 of an adjacent colour. Same gain on flat art, but on line art it deletes whole stroke colours (dev_0089
+  −0.24, dev_0097 −0.16) → rejected (kept as `fringe="colour"` for experiments).
+- **Pre-quantisation edge restoration** (shock filter, Osher & Rudin 1990; Kuwahara/mode filters): would remove the
+  fringe colours before palette extraction, but also removes the anti-aliasing coverage that the sub-pixel boundary
+  placement (exp_011) reads → not prototyped.
+- **Wider sliver mixture test** (quantize.py): cannot see double fringes (each band's main neighbour is the other band) →
+  rejected on the diagnosis data.
+### Classifier / engine choice (work item 5)
+- **Better hand features / learned family classifier** (depth-limited tree or logistic regression on dev features):
+  not pursued — the per-image oracle over the four preset families is only +0.0012 above auto on dev_small, and the
+  type labels that are "wrong" (flat_illustration, diagram) share presets. Nothing to learn.
+- **Measured routing instead of predicted routing** (`photo_route="try"`): a classifier "photo" goes to the region
+  engine and reaches VTracer only through the measured region explosion — uses the actual cost signal; kept.
+- **Region-density fallback** (existing): density is a cost proxy, not a quality predictor — on tdev the region engine
+  wins at 48 802 regions and loses at 2 718. The pre-clean early bail-out further mislabels halftone/stencil art as
+  noise. Replaced by: noise-only bail for strong-edge graphics (`graphic_override`, features flat ≥ 0.2 and
+  ink_edge ≥ 0.4) + a noise threshold (`noise_density` 0.35) that separates real noise (0.6 regions/px) from art (≤ 0.22).
+- **Tiny learned engine selector** (logistic regression on the 10 classifier features, LOO-CV on tdev_small + dev_small):
+  considered; with 18 target items two rounded thresholds are as expressive as the data supports — revisit when
+  the full tdev region-engine runs exist (open problem in HANDOFF_C).
+### Fast vs max (work item 9)
+- **Plain 2× bicubic processing** (old max): gains = halved effective fit tolerance (+ diagrams' 1-px outlines), at
+  +93…+193 % bytes and −0.21 primitive recovery.
+- **Tight 1× fitting** (`fit_profile="tight"`, fit_tol 0.3 / line_tol 0.33): same gain on icon/logo/line art without
+  4× pixels; cost proxy: only the fit stage does more work (+25…+100 % nodes), quantisation / graph unchanged.
+- **Selective 2× for line art / diagrams only** (`max_presets`): keeps the diagram gain (+0.015 over tight).
+- **Region-selective upscaling of thin structures / adaptive tolerance by local feature size**: would need per-chain
+  tolerances inside fit.py (stream A) or a thin-structure mask in quantize (stream B); not prototyped — listed as
+  open problem (target: the dev_0117-type 1-px box outlines lost at 1×).

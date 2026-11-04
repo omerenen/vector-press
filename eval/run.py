@@ -105,6 +105,9 @@ def evaluate_one(args):
         rec["time"] = time.perf_counter() - t0
         rec["timings"] = stats.get("timings", {})
         rec["detected_type"] = stats.get("image_type")
+        for k in ("preset", "fallback", "engine", "n_regions", "upscale"):
+            if stats.get(k) is not None:
+                rec["st_" + k] = stats[k]
         with open(os.path.join(out_dir, iid + ".svg"), "w") as f:
             f.write(svg)
         rec["valid"] = M.svg_valid(svg)
