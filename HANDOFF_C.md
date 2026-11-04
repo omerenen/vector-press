@@ -18,7 +18,7 @@ fit_profile="default", max_presets=["icon","logo","flat_illustration","line_art"
 | `route_max_c90` | — | 100 | photo_route "try" and graphic_override only when the classifier's c90 ≤ 100 (painterly many-colour AI art stays on VTracer) |
 | `fringe_max_colors` | — | 16 | fringe clean-up only for small palettes |
 | `photo_fallback` | (implicit: auto only) | None | force the region-explosion fallback on/off for explicit presets (evaluation tool) |
-Config with the recommended values: `eval/configs/C_final.yaml` (dev) / `C_tfinal.yaml` (tdev, LPIPS + print/cut).
+Configs: `eval/configs/C_final2.yaml` / `C_tfinal2.yaml` (= new defaults, preset auto; tdev with LPIPS + print/cut); `C_final.yaml` / `C_tfinal.yaml` = the ungated first candidate (tdev +0.012).
 `eval/run.py`: per-item `st_preset`, `st_fallback`, `st_engine`, `st_n_regions`, `st_upscale` are now stored.
 
 ## Numbers vs phase2-base (full runs; C_base / C_tbase = unchanged phase2-base, C_final2 / C_tfinal2 = new defaults; dev identical to C_final)
