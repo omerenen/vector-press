@@ -242,6 +242,10 @@ def _end_tangent(P, at_start, L=3.0):
     return _unit(Q[j] - Q[0])
 
 
+REPARAM_ITERS = 3          # phase 2 integration: 3 iterations + stall test (fit -25 %, SSIM equal; phase 1: 6, inf)
+REPARAM_MIN_GAIN = 0.95
+
+
 def fit_cubic(P, t1, t2, tol, depth=0):
     n = len(P)
     if n == 2 or depth > 12:
@@ -253,12 +257,15 @@ def fit_cubic(P, t1, t2, tol, depth=0):
     if err <= tol:
         return [ctrl]
     if err <= 4 * tol:
-        for _ in range(6):
+        for _ in range(REPARAM_ITERS):
             u = _reparam(P, ctrl, u)
             ctrl = _generate(P, u, t1, t2)
+            prev = err
             err, idx = _max_err(P, ctrl, u)
             if err <= tol:
                 return [ctrl]
+            if err > REPARAM_MIN_GAIN * prev:   # Newton reparameterisation stalled: split instead of iterating on
+                break
     idx = min(max(idx, 1), n - 2)
     tc = _unit(P[idx - 1] - P[idx + 1])
     return fit_cubic(P[:idx + 1], t1, tc, tol, depth + 1) + fit_cubic(P[idx:], -tc, t2, tol, depth + 1)

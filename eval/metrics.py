@@ -172,13 +172,13 @@ def _harris_color(rgb, sigma):
 def corner_metrics(gt4, out4, corners, scale, radius=1.5):
     """Corner recall (output has a strong corner within `radius` px) and mean position error."""
     if not corners:
-        return None, None
+        return None, None, None
     sig = 0.6 * scale
     rg = _harris_color(gt4, sig)
     ro = _harris_color(out4, sig)
     H, W = rg.shape
     R = int(math.ceil(radius * scale))
-    found, errs = 0, []
+    found, errs, errs_nom = 0, [], []
     n = 0
     for (x, y) in corners:
         cx, cy = int(round(x * scale)), int(round(y * scale))
@@ -196,10 +196,17 @@ def corner_metrics(gt4, out4, corners, scale, radius=1.5):
         if o.max() >= 0.5 * gmax:
             found += 1
             iy, ix = np.unravel_index(np.argmax(o), o.shape)
-            errs.append(math.hypot(ix - R, iy - R) / scale)
+            # phase 2 (proposal of stream A, applied to all methods): error relative to the GT render's own Harris
+            # peak in the same disc. The nominal vertex is not where any detector peaks (GT vs itself gave
+            # 0.44-1.15 px, diagrams: stroke centre line vs visible outer corner). Old definition kept as corner_err_nominal.
+            gw = np.where(disk, g, -np.inf)
+            gy, gx = np.unravel_index(np.argmax(gw), gw.shape)
+            errs.append(math.hypot(ix - gx, iy - gy) / scale)
+            errs_nom.append(math.hypot(ix - R, iy - R) / scale)
     if n == 0:
-        return None, None
-    return found / n, (float(np.mean(errs)) if errs else None)
+        return None, None, None
+    return (found / n, (float(np.mean(errs)) if errs else None),
+            (float(np.mean(errs_nom)) if errs_nom else None))
 
 
 # ----------------------------------------------------------------- SVG structure

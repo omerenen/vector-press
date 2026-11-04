@@ -145,8 +145,8 @@ def evaluate_one(args):
             rec["edge_dev"], rec["mismatch4x"] = M.edge_deviation(composite_over(gt4), composite_over(out4), scale)
             rec["gap_px"] = M.gap_pixels(out4, gt4[..., 3] > 250)
             rec["gap_ppm"] = rec["gap_px"] / (W4 * H4) * 1e6
-            cr, ce = M.corner_metrics(composite_over(gt4), composite_over(out4), item.get("corners", []), scale)
-            rec["corner_recall"], rec["corner_err"] = cr, ce
+            cr, ce, cn = M.corner_metrics(composite_over(gt4), composite_over(out4), item.get("corners", []), scale)
+            rec["corner_recall"], rec["corner_err"], rec["corner_err_nominal"] = cr, ce, cn
             sx, sy, ox, oy = svg_scale(svg, W, H)
             pr, per = M.primitive_recovery(svg, item.get("primitives", []), sx, sy, ox, oy)
             rec["prim_recovery"] = pr
@@ -167,7 +167,7 @@ def evaluate_one(args):
 
 
 KEYS = ["composite", "ssim", "ssim_in", "psnr", "msssim", "gmsd", "de_mean", "de_p95", "edge_f", "lpips", "alpha_iou",
-        "edge_dev", "mismatch4x", "gap_px", "corner_recall", "corner_err", "prim_recovery",
+        "edge_dev", "mismatch4x", "gap_px", "corner_recall", "corner_err", "corner_err_nominal", "prim_recovery",
         "n_paths", "n_nodes", "n_primitives", "bytes", "gz_bytes", "time",
         "pc_open_subpaths", "pc_self_intersections", "pc_overlap_ratio", "pc_n_colors", "pc_tiny_islands",
         "pc_thin_features", "pc_thin_area_mm2", "pc_n_nodes"]
