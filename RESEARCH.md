@@ -190,3 +190,24 @@ stage (screened on the raster level = mean-colour render vs input at equal bound
 - **Region-selective upscaling of thin structures / adaptive tolerance by local feature size**: would need per-chain
   tolerances inside fit.py (stream A) or a thin-structure mask in quantize (stream B); not prototyped — listed as
   open problem (target: the dev_0117-type 1-px box outlines lost at 1×).
+
+## Phase 2 — integration (lead)
+### Engine routing on the target set: what actually moved the numbers
+Root cause on AI art: the routing between the region engine and VTracer, not the region engine's quality. Three
+alternatives were compared: (a) better region engine so textured art stays in it (stream B: MS segmentation),
+(b) better routing rules (stream C: noise branch, graphic override, photo "try"), (c) a fidelity check of the region
+engine's own result (label-map reconstruction error, tried in integration). (a)+(b) are not additive on tdev (both fix
+the same items); the independent review showed that on ttest the measured gain comes from VTracer items leaving the
+coarse noise parameters, while items newly kept in the region engine lose on average. (c) did not separate winners
+from losers on tuning data (4 relevant items; good region-engine art reaches the same error) and was dropped.
+What remains open: a per-image engine choice that compares both renders (≈2× cost) or a learned quality predictor
+trained on tdev-like data — the per-image oracle on tdev_small is +0.009 above the current routing (C-10).
+### Resolution in the VTracer path
+The largest single target-set gain of the integration was not an algorithm: the photo engine traced 1792 px AI art at
+1024 px (phase-1 speed cap for photos). Working at native size (cap 1792) gave tdev +0.016 (every large VTracer item
++0.08…+0.12). Alternatives (2048 cap, keep 1024 and sharpen, trace tiles) were weighed by cost: 2048 adds 35 % time on
+3000² inputs for no target-set benefit (DALL-E's long side is 1792).
+### Paint merging for cut files
+OKLab Euclidean distance exaggerates differences between near-blacks (L 0.009 vs 0.06 = 0.05 apart, both look black),
+so OKLab-threshold merging failed; CIE76 ΔE in CIELAB (< 6) merges them. CIEDE2000 would be the principled choice but is
+not needed at this coarse threshold.
