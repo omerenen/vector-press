@@ -854,3 +854,5 @@ vs tuned VTracer 0.6731 → wins 50/67 items (before: 44); vs phase2-base: 31 be
 ttest cut: 0.3245 (fidelity not the goal); self-intersections 0, overlap 0.00, colours 6.6, tiny islands 2.6, thin features
 36 (median 25), no fill-opacity. Core install without shapely (geometry repair off), dev: 0.9153 vs 0.9151, prim 0.860 vs 0.863.
 Fresh clone: core requirements → 69 passed, 2 skipped (shapely tests); + geometry extra → 85 passed; CLI ok.
+
+**best-v5** = `3b19ed3` (merge of phase2/integration into main; tag created locally, tag pushes are refused by the remote — HTTP 403 — so the SHA is recorded here).
