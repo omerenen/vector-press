@@ -825,3 +825,16 @@ Dev **test** (130, phase-1 held-out): final 0.9143 vs phase2-base 0.9012, tuned 
 primitive recovery 0.775 (base 0.417), corner recall 0.745 (base 0.773), corner err 0.363 px (base 0.408).
 Overfitting check **proc2** (60 procedural scenes, new seed 777 and parameter ranges): final 0.8897 vs tuned VTracer 0.7957
 (+0.094; the phase-1 gap on the old procedural scenes was +0.10) → the gain transfers to unseen generator settings.
+
+### Independent review (REVIEW_PHASE2.md, fresh subagent) and what was done
+| finding | action |
+|---|---|
+| B1 `colors=N` ignored (MS engine appends region mean colours; tdev_0044 colors=2/4/6 → 32/43/47 fills) | fixed: an explicit colour count is passed to the MS paint cap (`reduce_paints`), as for cut; test `test_explicit_colors_is_a_cap` |
+| B2 shapely imported at run time by `geom_repair` (default on) but declared "eval only"; its wheel bundles GEOS (LGPL-2.1, checked in `LICENSE_GEOS`) | shapely moved to an optional `geometry` extra (`requirements-geometry.txt`); without it `vectorize()` runs, skips the repair and reports `stats["geom_repair"]`; test with shapely import blocked. All numbers were measured *with* the extra |
+| M1 ttest gain is from VTracer parameters, not the region engine | confirmed and reported as such: all of +0.012 vs phase2-base comes from items whose fallback left the coarse "pure noise" VTracer parameters (C-5a); the region-engine items newly kept by the routing average −0.046 (the 4 large ttest regressions). 53/67 ttest outputs are VTracer (34 through the region-explosion fallback, 19 classified photo); "34/67" above counted only the former |
+| M2 VTracer baseline tuned on dev (not on the target), pipeline downsizes to 1024 px in the VTracer path | baseline kept as is (stated); the 1024 px cap was tested on tdev (below) |
+| M3 photo regression on test (test_0126 −0.083, test_0122 −0.067: `photo_route="try"` keeps them in the region engine with 28/120 regions) | **not fixed** (held-out). A label-map reconstruction-error gate was tried on tuning data only: winners (dev_0029/0069, q_err 1.6/1.9) and losers (tdev_0005/0050 with the c90 gate lifted, 2.3/2.5) — 4 points, and good region-engine tdev art has q_err up to 4.5 → no separable threshold on tuning data; code removed. Reported as a limitation |
+| M4 cut: background kept when ≥ 95 % of the canvas; near-identical blacks as separate layers; fill-opacity; "thin features removed" | fixed: background dropped whenever anything else remains; paints closer than CIE76 ΔE 6 merged (OKLab exaggerated near-black differences: L 0.009 vs 0.06); `opaque` for cut; README now says thin features are *reduced* and a colour may be several elements |
+| M5 `print` below VTracer fidelity, slow, "full fidelity" claim | README corrected (clean layered output, lower fidelity than auto, 10–40 s on textured 1024 px); budget alternative measured above (rejected) |
+| M6 proc2 used during development by stream A (fix motivated by proc2_0012, commit 0b2bf17) | disclosed: proc2 is not a pristine held-out set; the overfitting check rests mainly on the generator-level shift (new seed + ranges) and on test |
+| minor: figure-8 loops, tiny images in cut, timing columns of re-scored phase2-base, sheets vs tuned VTracer | documented; tiny-image cut background fixed by the background rule |
