@@ -28,12 +28,23 @@ From the wheels' CycloneDX SBOMs: MIT, Apache-2.0, MIT OR Apache-2.0, BSD-2-Clau
 Unlicense OR MIT, 0BSD, **Unicode-3.0** (unicode-ident data) and **Apache-2.0 WITH LLVM-exception** (target-lexicon,
 build-time). All permissive; no copyleft.
 
+## Optional "geometry" extra (requirements-geometry.txt / `pip install "vector-press[geometry]"`)
+| package | license | checked | used for |
+|---|---|---|---|
+| shapely 2.2.0 | BSD-3-Clause; **the binary wheel bundles GEOS 3.14.1 (`shapely.libs/libgeos*.so`), LGPL-2.1** | wheel metadata `License-Expression: BSD-3-Clause`, `shapely-2.2.0.dist-info/licenses/LICENSE_GEOS` ("License: LGPLv2.1") | geometry repair (no self-intersecting rings: `geom_repair`, region-primitive validation) and the print/cut readiness metrics (`eval/printcut.py`) |
+
+GEOS is weak copyleft (LGPL-2.1), used unmodified as a dynamically loaded shared library. Because the project's rule is
+"permissive licenses only", shapely is **not** in the core install: `requirements.txt` is permissive-only and
+`vectorize()` runs without shapely (geometry repair is then skipped and `stats["geom_repair"]` says so; outputs stay valid
+SVG but rare self-intersecting rings are not repaired). Install the extra (`make setup` does) to get the measured phase-2
+behaviour — all phase-2 numbers in REPORT.md / EXPERIMENTS.md were measured with it. Found by the independent review
+(REVIEW_PHASE2.md, B2); before, shapely was listed as "eval only" although `geom_repair` (default on) imported it.
+
 ## Evaluation / development only (not needed at runtime)
 | package | license | note |
 |---|---|---|
 | PyYAML 6.0.3 | MIT | eval configs |
 | pytest 9.2.0 | MIT | tests |
-| shapely 2.2.0 | BSD-3-Clause | print/cut metrics (eval only) |
 | pyarrow | Apache-2.0 | reads the DALL-E 3 parquet shards (dataset builder only) |
 | pandas | BSD-3-Clause | DiffusionDB metadata (abandoned builder only) |
 | AlexNet ImageNet weights (torchvision) | BSD-3-Clause | LPIPS backbone, eval only; fetched from a HuggingFace mirror and accepted only with the official SHA-256 7be5be79…cdee02 (`data/fetch_lpips.py`) |

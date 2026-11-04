@@ -1,0 +1,6 @@
+# Optional "geometry" extra: shapely 2.2.0 (BSD-3-Clause). Its binary wheels BUNDLE GEOS, which is LGPL-2.1
+# (dynamically linked shared library, see shapely-2.2.0.dist-info/licenses/LICENSE_GEOS) -> not part of the
+# permissive-only core install. Enables: geometry repair (no self-intersecting rings, recommended for cut / print)
+# and the print/cut readiness metrics of the evaluation harness (eval/printcut.py). All reported phase-2 numbers
+# were measured WITH this extra installed.
+shapely==2.2.0

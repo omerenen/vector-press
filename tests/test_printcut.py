@@ -1,4 +1,7 @@
 import numpy as np
+import pytest
+
+pytest.importorskip("shapely")   # optional geometry extra (requirements-geometry.txt)
 from PIL import Image, ImageDraw
 
 from eval.printcut import printcut_metrics

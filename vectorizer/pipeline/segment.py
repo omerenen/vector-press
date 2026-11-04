@@ -251,12 +251,57 @@ def snap_colors(lbl, pal, tol):
     return newl, pal
 
 
-def reduce_paints(lbl, pal, k, iters=8):
+def reduce_paints(lbl, pal, k, iters=8, merge_dist=0.0):
     """Map the region colours to at most k paints (area-weighted k-means in OKLab, farthest-point init).
-    Adjacent regions that get the same paint merge. Returns (lbl, pal) with labels into the k paints."""
+    Adjacent regions that get the same paint merge. merge_dist > 0: paints closer than this (OKLab) are merged
+    afterwards (k is a cap, not a target: near-identical blacks must not become separate vinyl layers).
+    Returns (lbl, pal) with labels into the (at most k) paints."""
     K = len(pal)
-    if K <= k:
+    if K <= k and merge_dist <= 0:
         return lbl, pal
+    if K <= k:
+        newl, C = lbl, pal.astype(np.float64)
+    else:
+        newl, C = _kmeans_paints(lbl, pal, k, iters)
+    if merge_dist > 0:
+        newl, C = _merge_close_paints(newl, C, merge_dist)
+    return newl, C.astype(np.float32)
+
+
+def _merge_close_paints(lbl, C, dist, X=None):
+    """Greedy merge of the closest paint pair while its distance < dist. Distances are measured on X (default C,
+    e.g. CIELAB for a CIE76 delta-E criterion); C (and X) of a merged pair become their area-weighted mean."""
+    w = np.bincount(lbl[lbl >= 0], minlength=len(C)).astype(np.float64)
+    C = np.asarray(C, np.float64).copy()
+    X = C if X is None else np.asarray(X, np.float64).copy()
+    a = np.arange(len(C))
+    alive = w > 0
+    while True:
+        idx = np.flatnonzero(alive)
+        if len(idx) < 2:
+            break
+        D = np.sqrt(((X[idx, None] - X[None, idx]) ** 2).sum(-1))
+        np.fill_diagonal(D, np.inf)
+        i, j = np.unravel_index(int(np.argmin(D)), D.shape)
+        if D[i, j] >= dist:
+            break
+        p, q = idx[i], idx[j]
+        C[p] = (C[p] * w[p] + C[q] * w[q]) / (w[p] + w[q])     # area-weighted mean colour
+        if X is not C:
+            X[p] = (X[p] * w[p] + X[q] * w[q]) / (w[p] + w[q])
+        w[p] += w[q]
+        w[q] = 0
+        alive[q] = False
+        a[a == q] = p
+    used = np.flatnonzero(alive)
+    remap = np.full(len(C), -1, np.int64)
+    remap[used] = np.arange(len(used))
+    m = remap[a]
+    return np.where(lbl >= 0, m[np.maximum(lbl, 0)], lbl).astype(np.int32), C[used]
+
+
+def _kmeans_paints(lbl, pal, k, iters):
+    K = len(pal)
     w = np.bincount(lbl[lbl >= 0], minlength=K).astype(np.float64)
     P = pal.astype(np.float64)
     c = [int(np.argmax(w))]
@@ -274,4 +319,4 @@ def reduce_paints(lbl, pal, k, iters=8):
                 C[j] = (P[m] * w[m, None]).sum(0) / w[m].sum()
     a = ((P[:, None] - C[None]) ** 2).sum(-1).argmin(1)
     newl = np.where(lbl >= 0, a[np.maximum(lbl, 0)], lbl).astype(np.int32)
-    return newl, C.astype(np.float32)
+    return newl, C

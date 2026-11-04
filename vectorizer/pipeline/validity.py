@@ -18,6 +18,12 @@ import numpy as np
 
 from .fit import chain_samples, reverse_geom
 
+try:  # optional: shapely (BSD-3) wheels bundle GEOS (LGPL-2.1) -> kept out of the core install (LICENSES.md)
+    import shapely  # noqa: F401
+    HAVE_SHAPELY = True
+except ImportError:  # pragma: no cover - depends on the environment
+    HAVE_SHAPELY = False
+
 
 def flatten_geom(g, n_curve=8, n_arc=16, prec=2):
     """Points along a geometry dict (start included); arcs via the SVG endpoint parameterisation.

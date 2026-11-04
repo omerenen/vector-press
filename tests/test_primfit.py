@@ -2,6 +2,9 @@
 import math
 
 import numpy as np
+import pytest
+
+pytest.importorskip("shapely")   # optional geometry extra (requirements-geometry.txt)
 from PIL import Image, ImageDraw
 
 from vectorizer.pipeline.boundary import assemble_regions, build_graph, label_regions

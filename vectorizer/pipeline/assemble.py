@@ -83,7 +83,7 @@ def build_elements(lbl, palette_rgb, opts, timings=None, label_fill=None, ctx=No
     t = time.perf_counter()
     # region opacity from the input alpha (median over the region); < 0.98 -> fill-opacity
     opacity = np.ones(len(regions))
-    if alpha is not None and (alpha[lbl >= 0] < 250).any():
+    if alpha is not None and not opts.get("opaque", False) and (alpha[lbl >= 0] < 250).any():
         from scipy import ndimage as _ndi
         idx = np.arange(len(regions))
         a16 = alpha.astype(np.int16)

@@ -64,6 +64,9 @@ DEFAULTS = dict(
     cutout=False,            # cut-file geometry: real holes, no stacking overlaps, no seams, one path per colour
     drop_background=False,   # cut: remove the background colour (it is not cut / weeded)
     silhouette=False,        # cut: single-colour silhouette
+    photo_max_side=None,     # region-explosion fallback (VTracer photo engine): working size cap; None = photo preset's
+    opaque=False,            # cut: no fill-opacity (vinyl / laser layers are opaque)
+    paint_merge=0.0,         # cut: merge paints closer than this CIE76 delta-E (one vinyl / laser layer); 0 = off
     min_feature_mm=0.0,      # cut: remove features thinner than this at the physical output width
     cut_width_mm=100.0,      # cut: physical output width used for the size thresholds            # flat semi-transparent areas with alpha >= this are kept (with fill-opacity)
     seam_width=1.0,          # width of the under-stroke along shared borders (removes AA seams)
@@ -231,6 +234,13 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
     unknown = set(opts) - set(DEFAULTS)
     if unknown:
         raise TypeError(f"unknown option(s): {sorted(unknown)}")
+    if opts["geom_repair"]:
+        from .pipeline.validity import HAVE_SHAPELY
+        if not HAVE_SHAPELY:     # geometry repair needs the optional shapely extra (pip install "vector-press[geometry]")
+            opts["geom_repair"] = False
+            stats["geom_repair"] = "unavailable (shapely not installed)"
+    # an explicit colour count is a hard cap on distinct paints (the MS engine otherwise adds region mean colours)
+    user_colors = (options.get("colors") not in (None, "auto")) or options.get("max_colors") is not None
     fallback = auto if opts["photo_fallback"] is None else bool(opts["photo_fallback"])
     graphic = bool(fallback and opts["graphic_override"] and feats and not feats.get("empty")
                    and feats["flat"] >= 0.2 and feats["ink_edge"] >= 0.4 and feats["c90"] <= opts["route_max_c90"])
@@ -279,7 +289,7 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
                                                               else opts["max_region_density"] * 4),
                                                 segment=opts["segment"], seg_lambda=opts["seg_lambda"],
                                                 seg_snap=opts["seg_snap"],
-                                                seg_paints=opts["max_colors"] if opts["cutout"] else None,
+                                                seg_paints=opts["max_colors"] if (opts["cutout"] or user_colors) else None,
                                                 seg_init=opts["seg_init"], seg_model=opts["seg_model"],
                                                 seg_pal_snap=opts["seg_pal_snap"], seg_premerge=opts["seg_premerge"],
                                                 seg_budget=None if fallback else opts["seg_budget"],
@@ -314,12 +324,21 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
             if opts["silhouette"]:
                 lbl, pal_lab = _cut.silhouette(lbl, pal_lab)
                 pal_rgb = oklab_to_rgb8(pal_lab)
+            if opts["paint_merge"] > 0:      # k is a cap: near-identical paints are one vinyl / laser layer
+                from .pipeline.segment import _merge_close_paints
+                from skimage.color import rgb2lab
+                cie = rgb2lab(oklab_to_rgb8(pal_lab).reshape(1, -1, 3) / 255.0).reshape(-1, 3)
+                # CIE76 delta-E in CIELAB (OKLab exaggerates differences between near-blacks)
+                lbl, pal_lab = _merge_close_paints(lbl, pal_lab, opts["paint_merge"], X=cie)
+                pal_lab = pal_lab.astype(np.float32)
+                pal_rgb = oklab_to_rgb8(pal_lab)
             px_per_mm = W0 / float(opts["cut_width_mm"]) * (W / W0)
             if opts["min_feature_mm"]:
                 lbl = _cut.enforce_min_feature(lbl, opts["min_feature_mm"] * px_per_mm, pal_lab)
             if opts["drop_background"]:
                 bgl = _cut.background_label(lbl)
-                if bgl >= 0 and (lbl == bgl).mean() < 0.95:
+                # dropped whenever anything else remains (a small design on a large canvas is the usual case)
+                if bgl >= 0 and ((lbl >= 0) & (lbl != bgl)).any():
                     lbl = np.where(lbl == bgl, -1, lbl)
             timings["cut"] = time.perf_counter() - t
         if (fallback and qinfo["n_regions"] > 300 and qinfo["n_regions"] > H * W * opts["max_region_density"]
@@ -333,8 +352,9 @@ def vectorize(image: ImageLike, preset: str = "auto", mode: str = "fast", **opti
             opts["vtracer_params"] = dict(popts["vtracer_params"])
             if qinfo.get("pure_noise", qinfo["n_regions"] > opts["noise_density"] * H * W):   # pure noise: bound size
                 opts["vtracer_params"].update(filter_speckle=8, color_precision=6, layer_difference=24)
-            if max(H, W) > popts["max_side"]:
-                sc = popts["max_side"] / max(H, W)
+            pmax = opts["photo_max_side"] or popts["max_side"]
+            if max(H, W) > pmax:
+                sc = pmax / max(H, W)
                 W, H = max(1, int(round(W * sc))), max(1, int(round(H * sc)))
                 rgba = _resize(rgba, W, H, _Image.LANCZOS)
                 stats["processed_size"] = [W, H]

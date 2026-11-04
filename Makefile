@@ -3,9 +3,12 @@ PY ?= python
 EXP ?= final
 SPLIT ?= test
 
-.PHONY: setup data target eval-target test eval eval-all report bench sheets clean
+.PHONY: setup setup-core data target eval-target test eval eval-all report bench sheets clean
 
-setup:
+setup:           ## core (permissive) + optional geometry extra (shapely; bundles LGPL-2.1 GEOS, see LICENSES.md)
+	$(PY) -m pip install -r requirements.txt -r requirements-geometry.txt
+
+setup-core:      ## permissive-only install (no geometry repair, no print/cut metrics)
 	$(PY) -m pip install -r requirements.txt
 
 data:            ## build dev + held-out test sets (needs npm for the Iconify packages)

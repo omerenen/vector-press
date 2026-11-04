@@ -19,7 +19,7 @@ PHOTO_POSTERIZE = dict(engine="graph", vtracer_params=None, merge_frac=0.6, mix_
 
 # Output-intent presets: applied on top of the content preset chosen by the classifier.
 CUT = dict(engine="graph", cutout=True, seam_width=0.0, gradients=False, max_colors=8, merge_frac=1.0,
-           drop_background=True, min_feature_mm=0.5, subpixel=True, max_side=2048)
+           drop_background=True, min_feature_mm=0.5, subpixel=True, max_side=2048, opaque=True, paint_merge=6.0)
 PRINT = dict(engine="graph", cutout=False, gradients=True, max_side=2048)
 INTENTS = {"cut": CUT, "print": PRINT}
 
