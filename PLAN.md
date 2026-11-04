@@ -27,3 +27,8 @@ VTracer is used for photo/posterize mode and as a fallback engine (`engine="vtra
 All milestones done; final numbers in REPORT.md (held-out test: composite 0.901 vs 0.817 tuned VTracer).
 Remaining ideas if work resumes: arc fitting for partially occluded circles, alpha-gradient fills, JPEG thin-line
 continuity (crossings), faster quantisation for the 2 s stretch goal, photo mode beyond VTracer.
+
+Status (phase 2, done): integration merged to main as best-v5. Results and limitations: REPORT.md (Turkish), review:
+REVIEW_PHASE2.md. Parallel plan executed as written (3 streams, no fallback to 2/sequential needed). Open items for a next
+phase: per-image engine choice (render both / learned quality predictor), compiled boundary graph + fitter for the 1.2 s
+target, faster print preset on textured art, real user target set + vectorizer.ai comparison (data/target).

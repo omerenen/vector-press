@@ -847,3 +847,10 @@ SSIM 0.821 → 0.841; 9 of the 18 large items change, each +0.080…+0.115, no i
 dev: identical (no dev image > 1024 px). Cost on a pathological 3000² texture (tdev_0008 upscaled, 430 k regions):
 1024 → 38 s / 13 MB, 2048 → 163 s / 56 MB, **1792 → 121 s / 43 MB**. Adopted: photo preset `max_side=1792` (= DALL-E's
 native long side; larger inputs are still capped).
+
+### Held-out re-run after the review fixes (second and last ttest pass; test / proc2 unaffected: no image > 1024 px, auto path unchanged)
+ttest final (auto): **0.7273** (SSIM 0.834, PSNR 26.1, LPIPS 0.161, ΔE 2.99, edge-F 0.877, gz 3.25 MB, median 20 s under 4 workers);
+vs tuned VTracer 0.6731 → wins 50/67 items (before: 44); vs phase2-base: 31 better, the same 4 worse (region-engine items).
+ttest cut: 0.3245 (fidelity not the goal); self-intersections 0, overlap 0.00, colours 6.6, tiny islands 2.6, thin features
+36 (median 25), no fill-opacity. Core install without shapely (geometry repair off), dev: 0.9153 vs 0.9151, prim 0.860 vs 0.863.
+Fresh clone: core requirements → 69 passed, 2 skipped (shapely tests); + geometry extra → 85 passed; CLI ok.
